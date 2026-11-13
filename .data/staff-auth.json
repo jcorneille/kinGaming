@@ -1,0 +1,58 @@
+{
+  "credentials": {
+    "admin": {
+      "userId": "staff-admin",
+      "username": "admin",
+      "fullName": "Aimé (Propriétaire / Admin)",
+      "role": "ADMIN",
+      "passwordHash": "scrypt$7d50ebbb85132a5b2f1e5fd9d5b0479d$9aa1247d0fcd4d15d6082b65f573c2858791b0b215665ad6cf72198cf8c7fae465b83006283759567caf52bed62fb9d858fbda8e17da5d6e3d1379ac40a58624",
+      "mustChangePassword": true,
+      "updatedAt": 1794590652210
+    },
+    "gerant": {
+      "userId": "staff-gerant",
+      "username": "gerant",
+      "fullName": "Christian (Gérant de Salle)",
+      "role": "GERANT",
+      "passwordHash": "scrypt$8027b628ce5b47a8540b906549a650a4$19774467785138d13831264ed289a1dc40d198765d61bdc00e541dc16d0dbd45a557f43a4e535568d59e1efc16cdbe9c2c51aa34a981e1fef9d7fe740262692c",
+      "mustChangePassword": true,
+      "updatedAt": 1794590652210
+    },
+    "erick": {
+      "userId": "staff-erick",
+      "username": "erick",
+      "fullName": "Erick (Caissier Accueil)",
+      "role": "CAISSIER",
+      "passwordHash": "scrypt$8768f5a69897753bf2f206d6089b5e72$203b381456ab00d3bb6202faa16da5cfb7976987e61a290c80c24172a40ea38b4872c9e1caff274c7c5d1b6d537046002a94fd2b48268c1392f01f9d636f1c16",
+      "mustChangePassword": true,
+      "updatedAt": 1794592544776
+    },
+    "sarah": {
+      "userId": "staff-sarah",
+      "username": "sarah",
+      "fullName": "Sarah (Caissière Soir)",
+      "role": "CAISSIER",
+      "passwordHash": "scrypt$70d56f3bc07001ee73c4373987ebe09b$351201d9948970f142ae0ef3a45c155c2935bc2c4cff6cd22ba665faa21f39aed31e04e1dd569c87c2087c56f6f3d25d0def116f7e7a6b4015b76f057c85d9f4",
+      "mustChangePassword": true,
+      "updatedAt": 1794590652210
+    }
+  },
+  "auditLogs": [
+    {
+      "id": "paud-1794592544776",
+      "timestamp": 1794592544776,
+      "userId": "staff-erick",
+      "username": "erick",
+      "action": "PROFILE_UPDATE",
+      "details": "Profil (photo mise à jour) mis à jour pour @erick (\"Erick (Caissier Accueil)\")"
+    },
+    {
+      "id": "paud-1794592544604",
+      "timestamp": 1794592544604,
+      "userId": "staff-erick",
+      "username": "erick",
+      "action": "PROFILE_UPDATE",
+      "details": "Profil (photo mise à jour) mis à jour pour @erick (\"Erick (Caissier Accueil)\")"
+    }
+  ]
+}

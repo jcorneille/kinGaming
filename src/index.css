@@ -1,0 +1,56 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+@layer base {
+  body {
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+    background-color: #090d16;
+    color: #f1f5f9;
+    overflow-x: hidden;
+  }
+
+  code, pre, .font-mono {
+    font-family: 'JetBrains Mono', monospace;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Styles dédiés à l'impression ticket thermique 58mm / 80mm */
+@media print {
+  html, body {
+    background: #ffffff !important;
+    color: #000000 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+  body * {
+    visibility: hidden;
+  }
+  #thermal-receipt-print-area,
+  #thermal-receipt-print-area *,
+  #snack-receipt-print-area,
+  #snack-receipt-print-area * {
+    visibility: visible;
+  }
+  #thermal-receipt-print-area,
+  #snack-receipt-print-area {
+    position: fixed;
+    left: 0;
+    top: 0;
+    width: 80mm;
+    max-width: 100%;
+    margin: 0 auto;
+    padding: 3mm;
+    background: #ffffff !important;
+    color: #000000 !important;
+    font-family: 'Courier New', monospace;
+    font-size: 11px;
+    line-height: 1.25;
+  }
+  #thermal-receipt-print-area.thermal-58mm,
+  #snack-receipt-print-area.thermal-58mm {
+    width: 58mm !important;
+    font-size: 10px !important;
+  }
+}
+
