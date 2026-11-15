@@ -1,21 +1,29 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { WhatsAppConfig, NotificationLog } from '../types';
-import { OFFICIAL_TEMPLATES, normalizeE164, maskPhoneNumber, WhatsAppCloudProvider } from '../services/whatsappService';
-import { 
-  MessageSquare, 
-  Send, 
-  CheckCircle2, 
-  AlertTriangle, 
-  Clock, 
-  ShieldCheck, 
-  Key, 
-  Hash, 
-  Globe, 
-  Activity, 
+import {
+  OFFICIAL_TEMPLATES,
+  normalizeE164,
+  maskPhoneNumber,
+  WhatsAppCloudProvider,
+  hasRealMetaCredentials,
+  renderTemplateText,
+  buildWaMeUrl,
+} from '../services/whatsappService';
+import {
+  MessageSquare,
+  Send,
+  CheckCircle2,
+  AlertTriangle,
+  Clock,
+  ShieldCheck,
+  Key,
+  Hash,
+  Globe,
+  Activity,
   X,
   FileText,
-  UserCheck,
-  AlertCircle
+  AlertCircle,
+  ExternalLink,
 } from 'lucide-react';
 
 interface WhatsAppConfigModalProps {
@@ -25,6 +33,7 @@ interface WhatsAppConfigModalProps {
   onSaveConfig: (updated: WhatsAppConfig) => void;
   notificationLogs: NotificationLog[];
   onSimulateWebhookReply: (replyText: string, fromPhone: string) => void;
+  onWebhookEventDispatched?: () => void;
   onClearLogs?: () => void;
   onAddLog: (log: NotificationLog) => void;
 }
@@ -36,6 +45,7 @@ export const WhatsAppConfigModal: React.FC<WhatsAppConfigModalProps> = ({
   onSaveConfig,
   notificationLogs,
   onSimulateWebhookReply,
+  onWebhookEventDispatched,
   onAddLog,
 }) => {
   const [formData, setFormData] = useState<WhatsAppConfig>({ ...config });
@@ -45,6 +55,7 @@ export const WhatsAppConfigModal: React.FC<WhatsAppConfigModalProps> = ({
 
   // Test send state
   const [testRecipient, setTestRecipient] = useState(config.testPhoneNumber || '+243895457097');
+  const [testMessageMode, setTestMessageMode] = useState<'template' | 'text'>('template');
   const [selectedTemplate, setSelectedTemplate] = useState('poste_pret');
   const [testVars, setTestVars] = useState<Record<string, string>>({
     '1': 'Corneille',
@@ -52,14 +63,44 @@ export const WhatsAppConfigModal: React.FC<WhatsAppConfigModalProps> = ({
     '3': 'PS5',
     '4': '3',
   });
+  const [customTestText, setCustomTestText] = useState(
+    'Bonjour ! Test de notification Kin Gaming Hub : votre poste PS5 est prêt.'
+  );
   const [isSendingTest, setIsSendingTest] = useState(false);
-  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [testResult, setTestResult] = useState<{
+    success: boolean;
+    mode?: 'LIVE_META' | 'SIMULATION';
+    message: string;
+    waMeFallbackUrl?: string;
+  } | null>(null);
 
-  // Webhook reply simulator state
+  // Webhook reply & status simulator state
   const [simulatedReply, setSimulatedReply] = useState<'OUI' | 'ANNULER' | 'STOP'>('OUI');
   const [simulatedPhone, setSimulatedPhone] = useState(config.testPhoneNumber || '+243895457097');
+  const [selectedDeliveryLogId, setSelectedDeliveryLogId] = useState<string>('');
+  const [simulatedDeliveryStatus, setSimulatedDeliveryStatus] = useState<'delivered' | 'read' | 'failed'>('delivered');
+
+  useEffect(() => {
+    if (isOpen) {
+      setFormData({ ...config });
+      setTestRecipient(config.testPhoneNumber || '+243895457097');
+      setSimulatedPhone(config.testPhoneNumber || '+243895457097');
+      setTestResult(null);
+    }
+  }, [isOpen, config]);
 
   if (!isOpen) return null;
+
+  const isLiveMetaConfigured = hasRealMetaCredentials(formData);
+  const renderedTestMessage =
+    testMessageMode === 'text'
+      ? customTestText
+      : renderTemplateText(selectedTemplate, testVars) || `Modèle ${selectedTemplate}`;
+  const effectiveRecipient =
+    formData.isTestMode && formData.testPhoneNumber && normalizeE164(formData.testPhoneNumber).isValid
+      ? formData.testPhoneNumber
+      : testRecipient;
+  const directWaMeUrl = buildWaMeUrl(effectiveRecipient, renderedTestMessage);
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
@@ -76,10 +117,20 @@ export const WhatsAppConfigModal: React.FC<WhatsAppConfigModalProps> = ({
     if (!norm.isValid) {
       setTestResult({
         success: false,
-        message: 'Numéro invalide pour la RDC (+243 suivi de 9 chiffres).',
+        message: 'Numéro invalide. Utilisez le format +243XXXXXXXXX ou E.164 international.',
       });
       setIsSendingTest(false);
       return;
+    }
+
+    // Sauvegarder automatiquement si des identifiants Meta ont été modifiés dans l'onglet Configuration
+    if (
+      formData.accessToken !== config.accessToken ||
+      formData.phoneNumberId !== config.phoneNumberId ||
+      formData.isTestMode !== config.isTestMode ||
+      formData.testPhoneNumber !== config.testPhoneNumber
+    ) {
+      onSaveConfig(formData);
     }
 
     try {
@@ -87,39 +138,49 @@ export const WhatsAppConfigModal: React.FC<WhatsAppConfigModalProps> = ({
         norm.e164,
         selectedTemplate,
         testVars,
-        formData
+        formData,
+        {
+          messageType: testMessageMode,
+          customText: testMessageMode === 'text' ? customTestText : undefined,
+        }
       );
 
       if (result.success) {
+        const isSim = result.mode === 'SIMULATION';
         setTestResult({
           success: true,
-          message: `Message envoyé avec succès ! (${result.mode === 'SIMULATION' ? 'Mode Simulation' : 'Meta Graph API'}) [${result.messageId}]`,
+          mode: result.mode,
+          message: isSim
+            ? `Simulation locale effectuée [${result.messageId}]. Attention : aucun vrai message WhatsApp n'a été envoyé sur votre téléphone car votre Jeton d'Accès Meta Graph API n'est pas configuré. Utilisez « Envoyer via WhatsApp (wa.me) » ci-dessous pour un envoi réel immédiat !`
+            : `Message réellement envoyé via Meta Graph API vers ${effectiveRecipient} ! [ID: ${result.messageId}]`,
+          waMeFallbackUrl: isSim ? directWaMeUrl : undefined,
         });
 
-        // Ajouter aux logs
         onAddLog({
           id: `notif-${Date.now()}`,
           timestamp: Date.now(),
           clientName: testVars['1'] || 'Destinataire Test',
           phone: norm.e164,
-          templateName: selectedTemplate,
-          variables: testVars,
-          renderedMessage: `[Test] Template: ${selectedTemplate}`,
-          status: 'DELIVERED',
+          templateName: testMessageMode === 'text' ? 'texte_libre' : selectedTemplate,
+          variables: testMessageMode === 'text' ? { '1': customTestText } : testVars,
+          renderedMessage: renderedTestMessage,
+          status: 'SENT',
           retryCount: 0,
           metaMessageId: result.messageId,
-          deliveredAt: Date.now(),
         });
       } else {
         setTestResult({
           success: false,
-          message: result.errorMessage || 'Échec de transmission Meta.',
+          mode: result.mode,
+          message: `${result.errorMessage || 'Échec de transmission Meta.'} Vous pouvez aussi envoyer ce message directement via WhatsApp Web/App (bouton ci-dessous).`,
+          waMeFallbackUrl: directWaMeUrl,
         });
       }
     } catch (err: any) {
       setTestResult({
         success: false,
         message: err.message || 'Erreur inconnue.',
+        waMeFallbackUrl: directWaMeUrl,
       });
     } finally {
       setIsSendingTest(false);
@@ -127,6 +188,7 @@ export const WhatsAppConfigModal: React.FC<WhatsAppConfigModalProps> = ({
   };
 
   const handleSelectTemplateForTest = (templateKey: string) => {
+    setTestMessageMode('template');
     setSelectedTemplate(templateKey);
     const tmpl = OFFICIAL_TEMPLATES[templateKey];
     if (tmpl) {
@@ -367,6 +429,16 @@ export const WhatsAppConfigModal: React.FC<WhatsAppConfigModalProps> = ({
                     className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-emerald-500"
                   />
                 </div>
+
+                <div className="md:col-span-2 p-3 bg-slate-950/70 border border-cyan-500/30 rounded-lg space-y-1 text-xs">
+                  <div className="font-semibold text-cyan-300">URL de Callback Webhook Meta (Confirmations de livraison & Réponses)</div>
+                  <div className="font-mono text-white break-all select-all bg-slate-900 px-2.5 py-1.5 rounded border border-slate-800">
+                    {typeof window !== 'undefined' ? `${window.location.origin}/api/whatsapp/webhook` : '/api/whatsapp/webhook'}
+                  </div>
+                  <p className="text-[11px] text-slate-400">
+                    Configurez cette URL + le Verify Token ci-dessus dans Meta App &gt; WhatsApp &gt; Configuration &gt; Webhook (champs <code className="text-cyan-300">messages</code> et <code className="text-cyan-300">message_template_status_update</code>).
+                  </p>
+                </div>
               </div>
 
               {/* Automatic Triggers */}
@@ -486,86 +558,201 @@ export const WhatsAppConfigModal: React.FC<WhatsAppConfigModalProps> = ({
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {/* Test Sender */}
               <div className="bg-slate-800/40 border border-slate-700/60 rounded-xl p-4 space-y-4">
-                <div className="flex items-center gap-2 pb-2 border-b border-slate-700/60">
-                  <Send className="w-4 h-4 text-emerald-400" />
-                  <h3 className="text-sm font-semibold text-white">Émettre un message test (Meta Graph API)</h3>
+                <div className="flex items-center justify-between gap-2 pb-2 border-b border-slate-700/60">
+                  <div className="flex items-center gap-2">
+                    <Send className="w-4 h-4 text-emerald-400" />
+                    <h3 className="text-sm font-semibold text-white">Émettre un message test WhatsApp</h3>
+                  </div>
+                  <span
+                    className={`text-[10px] font-mono px-2 py-0.5 rounded-full border ${
+                      isLiveMetaConfigured
+                        ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                        : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                    }`}
+                  >
+                    {isLiveMetaConfigured ? 'Meta API Réelle' : 'Simulation Locale'}
+                  </span>
                 </div>
+
+                {!isLiveMetaConfigured && (
+                  <div className="p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-[11px] text-amber-200 space-y-1">
+                    <div className="font-bold flex items-center gap-1.5">
+                      <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                      <span>Jeton Meta Graph API non configuré</span>
+                    </div>
+                    <p className="text-amber-200/80">
+                      Sans vrai Jeton Meta dans « Configuration API & Clés », l'API automatique reste en simulation locale. Pour tester un <strong>vrai envoi immédiat sur votre téléphone</strong>, utilisez le bouton vert <strong>« Ouvrir & Envoyer dans WhatsApp (wa.me) »</strong> ci-dessous !
+                    </p>
+                  </div>
+                )}
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1">
-                    Numéro destinataire (E.164 RDC)
+                    Numéro destinataire (RDC +243 ou E.164)
                   </label>
                   <input
                     type="text"
                     value={testRecipient}
                     onChange={(e) => setTestRecipient(e.target.value)}
-                    placeholder="+243812345678"
+                    placeholder="+243895457097"
                     className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-emerald-500"
                   />
-                  <p className="text-[11px] text-slate-400 mt-0.5">
-                    Format: +243 suivi des 9 chiffres locaux.
-                  </p>
+                  {formData.isTestMode && formData.testPhoneNumber && (
+                    <p className="text-[11px] text-amber-300 mt-1">
+                      Mode Bac à Sable actif : l'API Meta routera vers {formData.testPhoneNumber}.
+                    </p>
+                  )}
                 </div>
 
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1">
-                    Modèle de message
-                  </label>
-                  <select
-                    value={selectedTemplate}
-                    onChange={(e) => handleSelectTemplateForTest(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500"
+                {/* Type de message : Modèle Meta ou Texte libre */}
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setTestMessageMode('template')}
+                    className={`py-1.5 px-2.5 rounded-lg text-xs font-semibold border transition cursor-pointer ${
+                      testMessageMode === 'template'
+                        ? 'bg-emerald-500/20 border-emerald-500 text-emerald-300'
+                        : 'bg-slate-900 border-slate-700 text-slate-400 hover:text-white'
+                    }`}
                   >
-                    {Object.values(OFFICIAL_TEMPLATES).map((t) => (
-                      <option key={t.name} value={t.name}>
-                        {t.name} - {t.description.substring(0, 45)}...
-                      </option>
-                    ))}
-                  </select>
+                    Modèle Meta
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTestMessageMode('text')}
+                    className={`py-1.5 px-2.5 rounded-lg text-xs font-semibold border transition cursor-pointer ${
+                      testMessageMode === 'text'
+                        ? 'bg-emerald-500/20 border-emerald-500 text-emerald-300'
+                        : 'bg-slate-900 border-slate-700 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    Message Texte Libre
+                  </button>
                 </div>
 
-                {/* Variable inputs */}
-                <div className="space-y-2">
-                  <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider">
-                    Paramètres des variables
-                  </label>
-                  {Object.keys(testVars).map((varKey) => (
-                    <div key={varKey} className="flex items-center gap-2">
-                      <span className="w-10 text-xs font-mono text-emerald-400 bg-slate-900 px-2 py-1.5 rounded text-center border border-slate-800">
-                        {`{{${varKey}}}`}
-                      </span>
-                      <input
-                        type="text"
-                        value={testVars[varKey] || ''}
-                        onChange={(e) => setTestVars({ ...testVars, [varKey]: e.target.value })}
-                        className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500"
-                      />
+                {testMessageMode === 'template' ? (
+                  <>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1">
+                        Modèle de message
+                      </label>
+                      <select
+                        value={selectedTemplate}
+                        onChange={(e) => handleSelectTemplateForTest(e.target.value)}
+                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500"
+                      >
+                        {Object.values(OFFICIAL_TEMPLATES).map((t) => (
+                          <option key={t.name} value={t.name}>
+                            {t.name} ({t.language}) - {t.description.substring(0, 40)}...
+                          </option>
+                        ))}
+                      </select>
                     </div>
-                  ))}
+
+                    {Object.keys(testVars).length > 0 && (
+                      <div className="space-y-2">
+                        <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider">
+                          Paramètres des variables
+                        </label>
+                        {Object.keys(testVars).map((varKey) => (
+                          <div key={varKey} className="flex items-center gap-2">
+                            <span className="w-10 text-xs font-mono text-emerald-400 bg-slate-900 px-2 py-1.5 rounded text-center border border-slate-800">
+                              {`{{${varKey}}}`}
+                            </span>
+                            <input
+                              type="text"
+                              value={testVars[varKey] || ''}
+                              onChange={(e) => setTestVars({ ...testVars, [varKey]: e.target.value })}
+                              className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500"
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1">
+                      Contenu du message WhatsApp
+                    </label>
+                    <textarea
+                      rows={3}
+                      value={customTestText}
+                      onChange={(e) => setCustomTestText(e.target.value)}
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
+                    />
+                  </div>
+                )}
+
+                {/* Aperçu du message */}
+                <div className="p-2.5 rounded-lg bg-slate-950/80 border border-slate-800 text-[11px] text-slate-300">
+                  <span className="text-slate-400 font-semibold block mb-1">Aperçu du message :</span>
+                  "{renderedTestMessage}"
                 </div>
 
                 {testResult && (
                   <div
-                    className={`p-3 rounded-lg text-xs flex items-start gap-2 ${
-                      testResult.success
-                        ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-300'
-                        : 'bg-rose-500/10 border border-rose-500/30 text-rose-300'
+                    className={`p-3 rounded-lg text-xs space-y-2 ${
+                      !testResult.success
+                        ? 'bg-rose-500/10 border border-rose-500/30 text-rose-300'
+                        : testResult.mode === 'SIMULATION'
+                        ? 'bg-amber-500/10 border border-amber-500/30 text-amber-200'
+                        : 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-300'
                     }`}
                   >
-                    {testResult.success ? <CheckCircle2 className="w-4 h-4 mt-0.5 flex-shrink-0" /> : <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />}
-                    <span>{testResult.message}</span>
+                    <div className="flex items-start gap-2">
+                      {!testResult.success ? (
+                        <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0 text-rose-400" />
+                      ) : testResult.mode === 'SIMULATION' ? (
+                        <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0 text-amber-400" />
+                      ) : (
+                        <CheckCircle2 className="w-4 h-4 mt-0.5 flex-shrink-0 text-emerald-400" />
+                      )}
+                      <span>{testResult.message}</span>
+                    </div>
                   </div>
                 )}
 
-                <button
-                  type="button"
-                  onClick={handleSendTestMessage}
-                  disabled={isSendingTest}
-                  className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-700 text-white rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-2"
-                >
-                  <Send className="w-3.5 h-3.5" />
-                  {isSendingTest ? 'Transmission en cours...' : 'Envoyer via Graph API'}
-                </button>
+                <div className="grid grid-cols-1 gap-2">
+                  <button
+                    type="button"
+                    onClick={handleSendTestMessage}
+                    disabled={isSendingTest}
+                    className="w-full py-2.5 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 text-white rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                    {isSendingTest
+                      ? 'Transmission en cours...'
+                      : isLiveMetaConfigured
+                      ? 'Envoyer via Meta Cloud API (Automatique)'
+                      : 'Tester Proxy Serveur (Mode Simulation)'}
+                  </button>
+
+                  <a
+                    href={directWaMeUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={() => {
+                      const norm = normalizeE164(effectiveRecipient);
+                      onAddLog({
+                        id: `notif-wame-${Date.now()}`,
+                        timestamp: Date.now(),
+                        clientName: testVars['1'] || 'Test WhatsApp Direct',
+                        phone: norm.e164 || effectiveRecipient,
+                        templateName: testMessageMode === 'text' ? 'texte_libre_wa_me' : `${selectedTemplate}_wa_me`,
+                        variables: testVars,
+                        renderedMessage: renderedTestMessage,
+                        status: 'SENT',
+                        retryCount: 0,
+                        metaMessageId: `wame.${Date.now()}`,
+                      });
+                    }}
+                    className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-2 shadow-lg shadow-emerald-950/40"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    Ouvrir & Envoyer dans WhatsApp (Réel · wa.me)
+                  </a>
+                </div>
               </div>
 
               {/* Webhook Simulator */}
@@ -650,19 +837,142 @@ export const WhatsAppConfigModal: React.FC<WhatsAppConfigModalProps> = ({
 
                 <button
                   type="button"
-                  onClick={() => {
+                  onClick={async () => {
                     const norm = normalizeE164(simulatedPhone);
-                    onSimulateWebhookReply(simulatedReply, norm.e164 || simulatedPhone);
+                    const finalPhone = norm.e164 || simulatedPhone;
+                    try {
+                      await fetch('/api/whatsapp/webhook', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          object: 'whatsapp_business_account',
+                          entry: [
+                            {
+                              changes: [
+                                {
+                                  field: 'messages',
+                                  value: {
+                                    messages: [
+                                      {
+                                        from: finalPhone.replace(/^\+/, ''),
+                                        text: { body: simulatedReply },
+                                        timestamp: String(Math.floor(Date.now() / 1000)),
+                                      },
+                                    ],
+                                  },
+                                },
+                              ],
+                            },
+                          ],
+                        }),
+                      });
+                    } catch {
+                      // Fallback local
+                    }
+                    onSimulateWebhookReply(simulatedReply, finalPhone);
+                    onWebhookEventDispatched?.();
                     setTestResult({
                       success: true,
-                      message: `Événement webhook "${simulatedReply}" traité pour ${norm.e164 || simulatedPhone}.`,
+                      message: `Événement webhook "${simulatedReply}" traité via /api/whatsapp/webhook pour ${finalPhone}.`,
                     });
                   }}
-                  className="w-full py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-2"
+                  className="w-full py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-2 cursor-pointer"
                 >
                   <Activity className="w-3.5 h-3.5" />
-                  Déclencher le Webhook
+                  Déclencher Webhook Réponse Client
                 </button>
+
+                {/* Simulateur Webhook Accusé de Livraison (Meta statuses) */}
+                <div className="pt-3 border-t border-slate-700/60 space-y-2.5">
+                  <div className="text-xs font-semibold text-cyan-300">
+                    Confirmation de livraison Webhook Meta (Statuses)
+                  </div>
+                  <select
+                    value={selectedDeliveryLogId}
+                    onChange={(e) => setSelectedDeliveryLogId(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white"
+                  >
+                    <option value="">Dernière notification envoyée</option>
+                    {notificationLogs.slice(0, 15).map((lg) => (
+                      <option key={lg.id} value={lg.id}>
+                        {lg.clientName} ({lg.templateName}) — {lg.status}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {(['delivered', 'read', 'failed'] as const).map((st) => (
+                      <button
+                        key={st}
+                        type="button"
+                        onClick={() => setSimulatedDeliveryStatus(st)}
+                        className={`py-1.5 rounded-lg text-[11px] font-bold border uppercase cursor-pointer ${
+                          simulatedDeliveryStatus === st
+                            ? st === 'failed'
+                              ? 'bg-rose-500/20 border-rose-500 text-rose-300'
+                              : 'bg-cyan-500/20 border-cyan-500 text-cyan-300'
+                            : 'bg-slate-900 border-slate-700 text-slate-400'
+                        }`}
+                      >
+                        {st === 'delivered' ? 'Délivré' : st === 'read' ? 'Lu' : 'Échec'}
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const targetLog =
+                        notificationLogs.find((l) => l.id === selectedDeliveryLogId) || notificationLogs[0];
+                      const messageId = targetLog?.metaMessageId || `wamid.sim.${Date.now()}`;
+                      const recipientPhone = (targetLog?.phone || simulatedPhone).replace(/^\+/, '');
+                      try {
+                        await fetch('/api/whatsapp/webhook', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                            object: 'whatsapp_business_account',
+                            entry: [
+                              {
+                                changes: [
+                                  {
+                                    field: 'messages',
+                                    value: {
+                                      statuses: [
+                                        {
+                                          id: messageId,
+                                          status: simulatedDeliveryStatus,
+                                          recipient_id: recipientPhone,
+                                          timestamp: String(Math.floor(Date.now() / 1000)),
+                                          errors:
+                                            simulatedDeliveryStatus === 'failed'
+                                              ? [{ message: 'Numéro injoignable (Simulation Webhook)' }]
+                                              : undefined,
+                                        },
+                                      ],
+                                    },
+                                  },
+                                ],
+                              },
+                            ],
+                          }),
+                        });
+                        onWebhookEventDispatched?.();
+                        setTestResult({
+                          success: true,
+                          message: `Accusé Webhook "${simulatedDeliveryStatus.toUpperCase()}" reçu pour ${messageId}.`,
+                        });
+                      } catch (err: any) {
+                        setTestResult({
+                          success: false,
+                          message: err?.message || 'Erreur lors de l’appel webhook',
+                        });
+                      }
+                    }}
+                    className="w-full py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    Simuler Accusé de Livraison Meta
+                  </button>
+                </div>
               </div>
             </div>
           )}
@@ -723,6 +1033,16 @@ export const WhatsAppConfigModal: React.FC<WhatsAppConfigModalProps> = ({
                         {log.metaMessageId && (
                           <div className="text-[10px] font-mono text-slate-400 truncate max-w-[140px]">
                             ID: {log.metaMessageId.substring(0, 16)}...
+                          </div>
+                        )}
+                        {log.deliveredAt && (
+                          <div className="text-[10px] font-mono text-blue-400">
+                            Délivré : {new Date(log.deliveredAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                          </div>
+                        )}
+                        {log.readAt && (
+                          <div className="text-[10px] font-mono text-emerald-400">
+                            Lu : {new Date(log.readAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                           </div>
                         )}
                       </div>

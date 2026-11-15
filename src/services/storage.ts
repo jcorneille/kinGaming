@@ -24,6 +24,7 @@ import {
   SettingsHistoryEntry,
   ScheduledSettingChange,
   PaymentMethod,
+  TimeSlotPricingRule,
 } from '../types';
 import { DEFAULT_TIER_RULES, getISOWeekKey } from './tierEngine';
 
@@ -78,6 +79,42 @@ export const DEFAULT_PROMOTIONS: PromotionRule[] = [
     applicableStationTypes: ['PS5'],
     minTierRequired: 'VIP',
     isActive: true,
+  },
+];
+
+export const DEFAULT_TIME_SLOT_RULES: TimeSlotPricingRule[] = [
+  {
+    id: 'slot-morning',
+    name: 'Heures Creuses Matin (-15%)',
+    startTime: '09:00',
+    endTime: '12:00',
+    daysOfWeek: [1, 2, 3, 4, 5],
+    modifierType: 'PERCENT_DISCOUNT',
+    modifierValue: 15,
+    applicableStationTypes: ['PS4', 'PS5'],
+    isActive: true,
+  },
+  {
+    id: 'slot-peak-evening',
+    name: 'Heures de Pointe Soirée (+10%)',
+    startTime: '18:00',
+    endTime: '23:00',
+    daysOfWeek: [],
+    modifierType: 'PERCENT_SURCHARGE',
+    modifierValue: 10,
+    applicableStationTypes: ['PS4', 'PS5'],
+    isActive: false,
+  },
+  {
+    id: 'slot-weekend-vip',
+    name: 'Week-end Prime (+15%)',
+    startTime: '14:00',
+    endTime: '22:00',
+    daysOfWeek: [0, 6],
+    modifierType: 'PERCENT_SURCHARGE',
+    modifierValue: 15,
+    applicableStationTypes: ['PS5'],
+    isActive: false,
   },
 ];
 
@@ -161,6 +198,8 @@ export const DEFAULT_SETTINGS: SystemSettings = {
   toleranceMinutes: 5, // 5 min de grâce avant prochain palier
   extraControllerSurchargePercent: 25,
   stationSpecificOverrides: {},
+  enableTimeSlotPricing: true,
+  timeSlotPricingRules: DEFAULT_TIME_SLOT_RULES,
 
   // Section 3: Remises et promotions
   managerMaxDiscountPercent: 20, // 20% max pour le gérant sans accord admin
@@ -195,6 +234,7 @@ export const DEFAULT_SETTINGS: SystemSettings = {
   idleAutoCutMinutes: 10,
   warningBeforeCutMinutes: 5,
   soundAlertsEnabled: true,
+  voiceAlertsEnabled: true,
   mqttBrokerHost: '192.168.1.100',
   mqttBrokerPort: 1883,
   mqttUsername: 'gaminghub_operator',
@@ -255,6 +295,8 @@ export const DEFAULT_SETTINGS_BY_SECTION = {
     toleranceMinutes: 5,
     extraControllerSurchargePercent: 25,
     stationSpecificOverrides: {},
+    enableTimeSlotPricing: true,
+    timeSlotPricingRules: DEFAULT_TIME_SLOT_RULES,
   },
   discounts: {
     managerMaxDiscountPercent: 20,
@@ -289,6 +331,7 @@ export const DEFAULT_SETTINGS_BY_SECTION = {
     idleAutoCutMinutes: 10,
     warningBeforeCutMinutes: 5,
     soundAlertsEnabled: true,
+    voiceAlertsEnabled: true,
     mqttBrokerHost: '192.168.1.100',
     mqttBrokerPort: 1883,
     mqttUsername: 'gaminghub_operator',
@@ -1051,6 +1094,9 @@ export function loadAppState(): AppState {
     if (!Array.isArray(parsed.scheduledSettings)) {
       parsed.scheduledSettings = [];
     }
+    if (parsed.settings && parsed.settings.voiceAlertsEnabled === undefined) {
+      parsed.settings.voiceAlertsEnabled = true;
+    }
     // Migration: s'assurer que les tickets existants ont un signedToken
     if (parsed.tickets) {
       parsed.tickets = parsed.tickets.map(t => ({
@@ -1100,6 +1146,9 @@ export function loadAppState(): AppState {
           ...DEFAULT_SETTINGS.operatingHours,
           ...(parsed.settings.operatingHours || {}),
         },
+        timeSlotPricingRules: Array.isArray(parsed.settings.timeSlotPricingRules)
+          ? parsed.settings.timeSlotPricingRules
+          : DEFAULT_TIME_SLOT_RULES,
       };
     } else {
       parsed.settings = DEFAULT_SETTINGS;

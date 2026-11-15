@@ -172,8 +172,16 @@ Statut: Actif / Validé`;
             <div className="py-2 border-b border-dashed border-neutral-400 space-y-1">
               <div className="flex justify-between">
                 <span className="font-bold">POSTE ATTRIBUÉ :</span>
-                <span className="font-bold text-xs">POSTE {ticket.stationId} ({ticket.stationType})</span>
+                <span className="font-bold text-xs">
+                  {ticket.stationName || `POSTE ${ticket.stationId}`} ({ticket.stationType})
+                </span>
               </div>
+              {ticket.transferredFromStationId && (
+                <div className="flex justify-between text-[9px] bg-neutral-100 px-1.5 py-0.5 rounded border border-neutral-300">
+                  <span className="font-bold">TRANSFERT :</span>
+                  <span>Depuis Poste {ticket.transferredFromStationId} &rarr; Poste {ticket.stationId}</span>
+                </div>
+              )}
               <div className="flex justify-between">
                 <span>Joueur :</span>
                 <span className="font-semibold">{ticket.clientName}</span>
@@ -190,6 +198,31 @@ Statut: Actif / Validé`;
 
             {/* Montant & Règlement */}
             <div className="py-2 border-b border-dashed border-neutral-400 space-y-1">
+              {ticket.appliedTimeSlotLabel && (
+                <div className="flex justify-between text-[9px] text-neutral-700">
+                  <span>Tranche horaire :</span>
+                  <span className="font-bold">
+                    {ticket.appliedTimeSlotLabel}
+                    {typeof ticket.appliedTimeSlotPercent === 'number' && ticket.appliedTimeSlotPercent !== 0
+                      ? ` (${ticket.appliedTimeSlotPercent > 0 ? '+' : ''}${ticket.appliedTimeSlotPercent}%)`
+                      : ''}
+                  </span>
+                </div>
+              )}
+              {ticket.appliedPromoCode && (
+                <div className="flex justify-between text-[9px] text-neutral-700">
+                  <span>Code Promo ({ticket.appliedPromoCode}) :</span>
+                  <span className="font-bold">
+                    -{(ticket.appliedPromoDiscountCDF || ticket.discountCDF || 0).toLocaleString()} FC
+                  </span>
+                </div>
+              )}
+              {!ticket.appliedPromoCode && (ticket.discountCDF || 0) > 0 && (
+                <div className="flex justify-between text-[9px] text-neutral-700">
+                  <span>Remise fidélité :</span>
+                  <span className="font-bold">-{ticket.discountCDF!.toLocaleString()} FC</span>
+                </div>
+              )}
               <div className="flex justify-between font-bold text-xs">
                 <span>TOTAL :</span>
                 <span>{ticket.amountCDF.toLocaleString()} CDF</span>
@@ -216,14 +249,36 @@ Statut: Actif / Validé`;
               )}
               {ticket.mixedBreakdown && (
                 <div className="bg-neutral-100 p-1.5 rounded text-[9px] space-y-0.5 border border-neutral-300">
-                  <div className="flex justify-between">
-                    <span>Part Espèces :</span>
-                    <span className="font-bold">{ticket.mixedBreakdown.cashCDF?.toLocaleString()} FC</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Part Illico Cash :</span>
-                    <span className="font-bold">{ticket.mixedBreakdown.illicoCashCDF?.toLocaleString()} FC</span>
-                  </div>
+                  {(ticket.mixedBreakdown.cashCDF || 0) > 0 && (
+                    <div className="flex justify-between">
+                      <span>Part Espèces CDF :</span>
+                      <span className="font-bold">{ticket.mixedBreakdown.cashCDF?.toLocaleString()} FC</span>
+                    </div>
+                  )}
+                  {(ticket.mixedBreakdown.cashUSD || 0) > 0 && (
+                    <div className="flex justify-between">
+                      <span>Part Espèces USD :</span>
+                      <span className="font-bold">${ticket.mixedBreakdown.cashUSD?.toFixed(2)}</span>
+                    </div>
+                  )}
+                  {(ticket.mixedBreakdown.illicoCashCDF || 0) > 0 && (
+                    <div className="flex justify-between">
+                      <span>Part Illico Cash :</span>
+                      <span className="font-bold">
+                        {ticket.mixedBreakdown.illicoCashCDF?.toLocaleString()} FC
+                        {ticket.mixedBreakdown.illicoCashRef ? ` (${ticket.mixedBreakdown.illicoCashRef})` : ''}
+                      </span>
+                    </div>
+                  )}
+                  {(ticket.mixedBreakdown.momoCDF || 0) > 0 && (
+                    <div className="flex justify-between">
+                      <span>Part {ticket.mixedBreakdown.momoProvider || 'Mobile Money'} :</span>
+                      <span className="font-bold">
+                        {ticket.mixedBreakdown.momoCDF?.toLocaleString()} FC
+                        {ticket.mixedBreakdown.momoRef ? ` (${ticket.mixedBreakdown.momoRef})` : ''}
+                      </span>
+                    </div>
+                  )}
                 </div>
               )}
               {ticket.changeGivenCDF !== undefined && ticket.changeGivenCDF > 0 && (

@@ -12,6 +12,7 @@ import {
   AlertTriangle
 } from 'lucide-react';
 import { Station } from '../types';
+import { getConsoleLabel, isHighTierConsole } from '../services/consoleCatalog';
 
 interface StationCardProps {
   station: Station;
@@ -35,7 +36,7 @@ export const StationCard: React.FC<StationCardProps> = ({
   const isOccupied = station.status === 'occupied';
   const isMaintenance = station.status === 'maintenance';
   const isAvailable = station.status === 'available';
-  const isPS5 = station.type === 'PS5';
+  const isPS5 = isHighTierConsole(station.type);
 
   // Alerte fin de session imminente (< 5 minutes)
   const isEndingSoon = isOccupied && station.remainingSeconds <= 300 && station.remainingSeconds > 0;
@@ -95,7 +96,7 @@ export const StationCard: React.FC<StationCardProps> = ({
                     isPS5 ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30' : 'bg-slate-800 text-slate-300'
                   }`}
                 >
-                  {station.type}
+                  {getConsoleLabel(station.type)}
                 </span>
               </h3>
             </div>

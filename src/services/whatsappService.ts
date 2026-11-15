@@ -1,7 +1,8 @@
 import { WhatsAppTemplate, WhatsAppConfig, NotificationLog } from '../types';
 
 /**
- * Standard templates approved by Meta (Utility category) in French
+ * Modèles WhatsApp Business Cloud (Meta)
+ * Inclut `hello_world` (pré-approuvé par défaut sur tout compte Sandbox Meta) + les modèles Utility FR.
  */
 export const OFFICIAL_TEMPLATES: Record<string, WhatsAppTemplate> = {
   poste_pret: {
@@ -40,39 +41,60 @@ export const OFFICIAL_TEMPLATES: Record<string, WhatsAppTemplate> = {
     bodyText: 'Félicitations {{1}} ! Vous venez de passer au statut {{2}} chez Kin Gaming Hub. Profitez dès maintenant de vos avantages exclusifs.',
     exampleVariables: ['Junior', 'Fidèle (-5% et priorité)'],
   },
+  hello_world: {
+    name: 'hello_world',
+    category: 'UTILITY',
+    language: 'en_US',
+    status: 'APPROVED',
+    description: 'Modèle standard pré-approuvé par défaut sur chaque nouveau compte Meta Developers (idéal pour premier test API).',
+    bodyText: 'Welcome and congratulations!! This message demonstrates your ability to send a WhatsApp message notification from the Cloud API.',
+    exampleVariables: [],
+  },
 };
 
 /**
- * Normalise un numéro au format international E.164 (RDC +243 par défaut)
- * Supporte formats: "0812345678", "812345678", "+243 81 234 5678", "243812345678"
+ * Vérifie si la configuration WhatsApp contient de vrais identifiants Meta Graph API
+ */
+export function hasRealMetaCredentials(config: WhatsAppConfig): boolean {
+  const token = (config.accessToken || '').trim();
+  const phoneId = (config.phoneNumberId || '').trim();
+  if (!token || !phoneId) return false;
+  if (token === 'EAAG...' || token === 'EAA...' || token.length < 25 || token.includes('xxxx')) return false;
+  return true;
+}
+
+/**
+ * Normalise un numéro au format international E.164 (RDC +243 par défaut, + support international)
+ * Supporte formats: "0812345678", "812345678", "+243 81 234 5678", "+33612345678"
  */
 export function normalizeE164(phone: string): { e164: string; isValid: boolean; displayFormatted: string } {
   if (!phone) {
     return { e164: '', isValid: false, displayFormatted: '' };
   }
 
-  // Enlever tous les espaces, tirets, parenthèses, points
   let cleaned = phone.replace(/[\s\-\(\)\.]/g, '');
 
-  if (cleaned.startsWith('+')) {
+  if (cleaned.startsWith('00')) {
+    cleaned = cleaned.substring(2);
+  } else if (cleaned.startsWith('+')) {
     cleaned = cleaned.substring(1);
   }
 
   // Préfixe RDC local débutant par 0 (ex. 0812345678 -> 9 chiffres après 0)
   if (cleaned.startsWith('0') && cleaned.length === 10) {
     cleaned = '243' + cleaned.substring(1);
-  } else if (!cleaned.startsWith('243') && cleaned.length === 9) {
+  } else if (!cleaned.startsWith('243') && cleaned.length === 9 && /^[89]/.test(cleaned)) {
     // Ex: 812345678 -> 243812345678
     cleaned = '243' + cleaned;
   }
 
-  // Validation E.164 pour la RDC: indicatif 243 + 9 chiffres (8X, 9X)
-  const isValid = /^243\d{9}$/.test(cleaned);
+  const isRdcValid = /^243\d{9}$/.test(cleaned);
+  const isIntlValid = /^[1-9]\d{7,14}$/.test(cleaned);
+  const isValid = isRdcValid || isIntlValid;
   const e164 = isValid ? `+${cleaned}` : cleaned ? `+${cleaned}` : '';
 
-  // Format d'affichage lisible: +243 81 234 5678
   let displayFormatted = e164;
-  if (isValid) {
+  if (isRdcValid) {
     displayFormatted = `+243 ${cleaned.substring(3, 5)} ${cleaned.substring(5, 8)} ${cleaned.substring(8)}`;
   }
 
@@ -80,12 +102,22 @@ export function normalizeE164(phone: string): { e164: string; isValid: boolean; 
 }
 
 /**
+ * Construit un lien direct WhatsApp (https://wa.me/...) utilisable sans API payante / compte Meta Developer
+ */
+export function buildWaMeUrl(phone: string, text: string): string {
+  const norm = normalizeE164(phone);
+  const digits = (norm.e164 || phone).replace(/[^0-9]/g, '');
+  const encoded = encodeURIComponent(text || '');
+  return digits ? `https://wa.me/${digits}?text=${encoded}` : `https://wa.me/?text=${encoded}`;
+}
+
+/**
  * Masquage conforme vie privée pour logs et affichage public (+243 81 *** **78)
  */
 export function maskPhoneNumber(phone: string): string {
   const norm = normalizeE164(phone);
-  if (!norm.isValid) return phone || 'Non renseigné';
-  const clean = norm.e164; // +243812345678
+  if (!norm.isValid || norm.e164.length < 9) return phone || 'Non renseigné';
+  const clean = norm.e164;
   return `${clean.substring(0, 7)} *** **${clean.substring(clean.length - 2)}`;
 }
 
@@ -108,6 +140,7 @@ export interface SendResult {
   status: 'DELIVERED' | 'SENT' | 'FAILED';
   errorMessage?: string;
   mode: 'LIVE_META' | 'SIMULATION';
+  reason?: string;
 }
 
 /**
@@ -115,25 +148,36 @@ export interface SendResult {
  */
 export class WhatsAppCloudProvider {
   /**
-   * Envoi d'un message template officiel via l'endpoint /api/whatsapp/send (proxy backend)
+   * Envoi d'un message template officiel ou texte libre via l'endpoint /api/whatsapp/send (proxy backend)
    */
   static async sendTemplate(
     toPhone: string,
     templateName: string,
     variables: Record<string, string>,
-    config: WhatsAppConfig
+    config: WhatsAppConfig,
+    options?: {
+      messageType?: 'template' | 'text';
+      customText?: string;
+      languageCode?: string;
+    }
   ): Promise<SendResult> {
     const { e164, isValid } = normalizeE164(toPhone);
     if (!isValid) {
       return {
         success: false,
         status: 'FAILED',
-        errorMessage: `Numéro invalide pour la RDC: "${toPhone}". Le format doit être +243 suivi de 9 chiffres.`,
+        errorMessage: `Numéro invalide: "${toPhone}". Utilisez le format +243XXXXXXXXX ou E.164 international.`,
         mode: 'SIMULATION',
       };
     }
 
-    const recipientPhone = config.isTestMode && config.testPhoneNumber ? normalizeE164(config.testPhoneNumber).e164 : e164;
+    const recipientPhone =
+      config.isTestMode && config.testPhoneNumber && normalizeE164(config.testPhoneNumber).isValid
+        ? normalizeE164(config.testPhoneNumber).e164
+        : e164;
+
+    const tmpl = OFFICIAL_TEMPLATES[templateName];
+    const resolvedLanguage = options?.languageCode || tmpl?.language || (templateName === 'hello_world' ? 'en_US' : 'fr');
 
     try {
       const response = await fetch('/api/whatsapp/send', {
@@ -143,6 +187,9 @@ export class WhatsAppCloudProvider {
           to: recipientPhone,
           templateName,
           variables,
+          languageCode: resolvedLanguage,
+          messageType: options?.messageType || 'template',
+          customText: options?.customText,
           configOverride: {
             phoneNumberId: config.phoneNumberId,
             accessToken: config.accessToken,
@@ -152,31 +199,32 @@ export class WhatsAppCloudProvider {
         }),
       });
 
-      if (response.ok) {
-        const data = await response.json();
+      const data = await response.json().catch(() => ({}));
+
+      if (response.ok && data.success) {
+        const mode: 'LIVE_META' | 'SIMULATION' =
+          data.mode === 'LIVE_META' ? 'LIVE_META' : 'SIMULATION';
         return {
           success: true,
           messageId: data.messageId || `wamid.${Math.random().toString(36).substring(2, 15)}`,
-          status: 'DELIVERED',
-          mode: data.mode || (config.isTestMode ? 'SIMULATION' : 'LIVE_META'),
+          status: 'SENT',
+          mode,
+          reason: data.reason,
         };
       } else {
-        const errData = await response.json().catch(() => ({}));
         return {
           success: false,
           status: 'FAILED',
-          errorMessage: errData.error || `Erreur serveur HTTP ${response.status}`,
-          mode: config.isTestMode ? 'SIMULATION' : 'LIVE_META',
+          errorMessage: data.error || `Erreur serveur HTTP ${response.status}`,
+          mode: hasRealMetaCredentials(config) ? 'LIVE_META' : 'SIMULATION',
         };
       }
     } catch (err: any) {
-      // Si le serveur backend est en mode Vite pur sans route express active ou hors-ligne
-      // Nous simulons avec succès pour les tests locaux
-      console.warn('WhatsApp API proxy fetch error, falling back to local simulator:', err);
+      console.warn('WhatsApp API proxy fetch error, simulating offline:', err);
       return {
-        success: true,
-        messageId: `wamid.sim_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
-        status: 'DELIVERED',
+        success: false,
+        status: 'FAILED',
+        errorMessage: err?.message || 'Serveur WhatsApp injoignable (mode hors-ligne)',
         mode: 'SIMULATION',
       };
     }
@@ -207,11 +255,11 @@ export class NotificationService {
     config: WhatsAppConfig,
     clientId?: string,
     onLogUpdate?: (log: NotificationLog) => void
-  ): Promise<NotificationLog> {
+  ): Promise<NotificationLog & { sendMode?: 'LIVE_META' | 'SIMULATION' }> {
     const renderedMessage = renderTemplateText(templateName, variables);
     const { e164 } = normalizeE164(toPhone);
 
-    const log: NotificationLog = {
+    const log: NotificationLog & { sendMode?: 'LIVE_META' | 'SIMULATION' } = {
       id: `notif-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
       timestamp: Date.now(),
       clientId,
@@ -237,9 +285,12 @@ export class NotificationService {
       const result = await WhatsAppCloudProvider.sendTemplate(toPhone, templateName, variables, config);
 
       if (result.success) {
-        log.status = 'DELIVERED';
+        log.status = result.status;
         log.metaMessageId = result.messageId;
-        log.deliveredAt = Date.now();
+        log.sendMode = result.mode;
+        if (result.status === 'DELIVERED') {
+          log.deliveredAt = Date.now();
+        }
         if (onLogUpdate) onLogUpdate({ ...log });
         return log;
       } else {
@@ -247,14 +298,12 @@ export class NotificationService {
         log.errorMessage = lastError;
 
         if (attempts < maxRetries) {
-          // Backoff: 1s, puis 2s
           const delayMs = Math.pow(2, attempts - 1) * 1000;
           await new Promise((res) => setTimeout(res, delayMs));
         }
       }
     }
 
-    // Échec définitif après 3 tentatives -> Alerte sonore et visuelle pour le caissier
     log.status = 'FAILED';
     log.failedAt = Date.now();
     log.errorMessage = `Échec après 3 tentatives: ${lastError}`;

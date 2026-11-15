@@ -197,6 +197,40 @@ export const SnackReceiptModal: React.FC<SnackReceiptModalProps> = ({
                 <span>Mode Paiement :</span>
                 <span className="font-semibold">{getPaymentLabel(sale.paymentMethod)}</span>
               </div>
+              {sale.paymentReference && (
+                <div className="flex justify-between text-[9px] text-neutral-600">
+                  <span>Réf. Transaction :</span>
+                  <span className="font-mono font-bold">{sale.paymentReference}</span>
+                </div>
+              )}
+              {sale.mixedBreakdown && (
+                <div className="bg-neutral-100 p-1.5 rounded text-[9px] space-y-0.5 border border-neutral-300 mt-1">
+                  {(sale.mixedBreakdown.cashCDF || 0) > 0 && (
+                    <div className="flex justify-between">
+                      <span>Part Espèces CDF :</span>
+                      <span className="font-bold">{sale.mixedBreakdown.cashCDF?.toLocaleString()} FC</span>
+                    </div>
+                  )}
+                  {(sale.mixedBreakdown.cashUSD || 0) > 0 && (
+                    <div className="flex justify-between">
+                      <span>Part Espèces USD :</span>
+                      <span className="font-bold">${sale.mixedBreakdown.cashUSD?.toFixed(2)}</span>
+                    </div>
+                  )}
+                  {(sale.mixedBreakdown.illicoCashCDF || 0) > 0 && (
+                    <div className="flex justify-between">
+                      <span>Part Illico Cash :</span>
+                      <span className="font-bold">{sale.mixedBreakdown.illicoCashCDF?.toLocaleString()} FC</span>
+                    </div>
+                  )}
+                  {(sale.mixedBreakdown.momoCDF || 0) > 0 && (
+                    <div className="flex justify-between">
+                      <span>Part {sale.mixedBreakdown.momoProvider || 'Mobile Money'} :</span>
+                      <span className="font-bold">{sale.mixedBreakdown.momoCDF?.toLocaleString()} FC</span>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Pied de reçu */}

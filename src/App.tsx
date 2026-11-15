@@ -26,11 +26,12 @@ import { LoginLandingView } from './components/LoginLandingView';
 import { MyProfileModal } from './components/MyProfileModal';
 import { FirstLoginPasswordModal } from './components/FirstLoginPasswordModal';
 import { SnackReceiptModal } from './components/SnackReceiptModal';
-import { NotificationService, normalizeE164 } from './services/whatsappService';
+import { NotificationService, normalizeE164, buildWaMeUrl, renderTemplateText } from './services/whatsappService';
 import { WhatsAppConfig, NotificationLog } from './types';
 
 import {
   Station,
+  StationType,
   Ticket,
   Client,
   QueueEntry,
@@ -40,6 +41,7 @@ import {
   SnackSale,
   SnackSaleItemDetail,
   PaymentMethod,
+  MixedPaymentBreakdown,
   AuditLog,
   StaffUser,
   StaffRole,
@@ -61,6 +63,14 @@ import { soundService } from './services/soundService';
 import { mqttGateway } from './services/mqttService';
 import { evaluateClientTier, getISOWeekKey } from './services/tierEngine';
 import {
+  getOfflineQueue,
+  syncTicketToServer,
+  syncAllTicketsToServer,
+  flushOfflineQueue,
+} from './services/offlineSync';
+import { isTimeWithinSlot } from './services/pricingEngine';
+import { getConsoleWatts, isHighTierConsole } from './services/consoleCatalog';
+import {
   Users,
   Tv,
   CheckCircle2,
@@ -76,7 +86,9 @@ import {
   LogIn,
   LogOut,
   Gamepad2,
-  Sliders
+  Sliders,
+  MessageSquare,
+  ExternalLink
 } from 'lucide-react';
 
 export default function App() {
@@ -143,8 +155,13 @@ export default function App() {
   } | null>(null);
   const [oneMinuteWarnings, setOneMinuteWarnings] = useState<{ stationId: number; clientName: string }[]>([]);
 
-  // Alerte visuelle caissier (ex: échec d'envoi WhatsApp)
+  // Alerte visuelle caissier (ex: échec d'envoi WhatsApp) & Toast envoi WhatsApp direct
   const [cashierAlertBanner, setCashierAlertBanner] = useState<string | null>(null);
+  const [whatsappToast, setWhatsappToast] = useState<{
+    status: 'sending' | 'live' | 'simulation' | 'error';
+    message: string;
+    waMeUrl?: string;
+  } | null>(null);
 
   // Notification de promotion statut
   const [promotionCelebration, setPromotionCelebration] = useState<{ clientName: string; newTier: string } | null>(null);
@@ -153,6 +170,15 @@ export default function App() {
   const [isOnline, setIsOnline] = useState<boolean>(typeof navigator !== 'undefined' ? navigator.onLine : true);
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [isInstallable, setIsInstallable] = useState<boolean>(false);
+  const [pendingSyncCount, setPendingSyncCount] = useState<number>(() => getOfflineQueue().length);
+
+  // Refs pour domotique programmée, file de sync, alertes vocales & polling webhook WhatsApp
+  const lastScheduleMinuteRef = useRef<string>('');
+  const lastWebhookPollRef = useRef<number>(Date.now() - 86400000);
+  const processedWebhookEventIdsRef = useRef<Set<string>>(new Set());
+  const spokenAlertDedupRef = useRef<Set<string>>(new Set());
+  const ticketsRef = useRef<Ticket[]>(appState.tickets);
+  const settingsRef = useRef<SystemSettings>(appState.settings);
 
   // Inactivité pour déconnexion automatique (défaut: 10 min)
   const lastActivityTime = useRef<number>(Date.now());
@@ -213,10 +239,17 @@ export default function App() {
     });
   }, []);
 
-  // Enregistrement de l'alerte caissier pour NotificationService
+  // Enregistrement de l'alerte caissier pour NotificationService & amorçage audio/voix
   useEffect(() => {
-    NotificationService.setCashierAlertHandler((message) => {
-      soundService.playAlertWarning();
+    soundService.ensureInitialized();
+    NotificationService.setCashierAlertHandler((message, clientName) => {
+      const s = settingsRef.current;
+      if (s.soundAlertsEnabled) {
+        soundService.playCashierWarningAlert(
+          `Alerte caissier : échec WhatsApp pour ${clientName}. Veuillez l'appeler à l'accueil.`,
+          s.voiceAlertsEnabled ?? true
+        );
+      }
       setCashierAlertBanner(message);
     });
   }, []);
@@ -224,6 +257,8 @@ export default function App() {
   // Sauvegarde automatique lors des modifications d'état
   useEffect(() => {
     saveAppState(appState);
+    ticketsRef.current = appState.tickets;
+    settingsRef.current = appState.settings;
   }, [appState]);
 
   // Écouteur d'activité pour déconnexion automatique
@@ -268,13 +303,35 @@ export default function App() {
     };
   }, [appState.isStaffAuthenticated, appState.settings.autoLogoutInactivityMinutes, appState.currentRole, appState.currentUser]);
 
-  // Écouteur de connectivité réseau & PWA
+  const handleSyncNow = async () => {
+    await flushOfflineQueue();
+    await syncAllTicketsToServer(ticketsRef.current);
+    setPendingSyncCount(getOfflineQueue().length);
+  };
+
+  // Écouteur de connectivité réseau, PWA & file de synchronisation hors-ligne
   useEffect(() => {
-    const handleOnline = () => setIsOnline(true);
+    const syncQueueAndTickets = () => {
+      void flushOfflineQueue().then(() => {
+        setPendingSyncCount(getOfflineQueue().length);
+      });
+      void syncAllTicketsToServer(ticketsRef.current);
+    };
+
+    const handleOnline = () => {
+      setIsOnline(true);
+      syncQueueAndTickets();
+    };
     const handleOffline = () => setIsOnline(false);
+    const handleQueueUpdate = () => setPendingSyncCount(getOfflineQueue().length);
 
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
+    window.addEventListener('kgh-offline-queue-updated', handleQueueUpdate);
+
+    if (typeof navigator === 'undefined' || navigator.onLine) {
+      syncQueueAndTickets();
+    }
 
     const handleBeforeInstall = (e: any) => {
       e.preventDefault();
@@ -287,9 +344,200 @@ export default function App() {
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('kgh-offline-queue-updated', handleQueueUpdate);
       window.removeEventListener('beforeinstallprompt', handleBeforeInstall);
     };
   }, []);
+
+  // Polling des événements Webhook Meta WhatsApp (/api/whatsapp/webhook-events)
+  const pollWhatsAppWebhookEvents = async () => {
+    if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+    try {
+      const res = await fetch(`/api/whatsapp/webhook-events?since=${lastWebhookPollRef.current}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const rawEvents = Array.isArray(data?.events) ? data.events : [];
+      const freshEvents = rawEvents.filter((ev: any) => ev?.id && !processedWebhookEventIdsRef.current.has(ev.id));
+      if (freshEvents.length === 0) return;
+
+      freshEvents.forEach((ev: any) => {
+        processedWebhookEventIdsRef.current.add(ev.id);
+        if (typeof ev.receivedAt === 'number' && ev.receivedAt > lastWebhookPollRef.current) {
+          lastWebhookPollRef.current = ev.receivedAt;
+        }
+      });
+
+      setAppState((prev) => {
+        let updatedLogs = [...prev.notificationLogs];
+        let updatedQueue = [...prev.queue];
+        let updatedClients = [...prev.clients];
+        const newAudits: AuditLog[] = [];
+
+        freshEvents.forEach((ev: any) => {
+          if (ev.kind === 'STATUS_UPDATE' && ev.status) {
+            const evPhoneNorm = normalizeE164(ev.recipientPhone || '').e164;
+            let matched = false;
+            updatedLogs = updatedLogs.map((l) => {
+              const idMatch = ev.metaMessageId && l.metaMessageId === ev.metaMessageId;
+              const phoneMatch = !matched && !idMatch && evPhoneNorm && normalizeE164(l.phone).e164 === evPhoneNorm;
+              if (idMatch || phoneMatch) {
+                matched = true;
+                return {
+                  ...l,
+                  status: ev.status,
+                  deliveredAt: ev.status === 'DELIVERED' ? ev.receivedAt || Date.now() : l.deliveredAt,
+                  readAt: ev.status === 'READ' ? ev.receivedAt || Date.now() : l.readAt,
+                  failedAt: ev.status === 'FAILED' ? ev.receivedAt || Date.now() : l.failedAt,
+                  errorMessage: ev.status === 'FAILED' ? ev.errorMessage || l.errorMessage : l.errorMessage,
+                };
+              }
+              return l;
+            });
+
+            newAudits.push({
+              id: `aud-wa-st-${ev.id}`,
+              timestamp: ev.receivedAt || Date.now(),
+              userRole: 'SYSTEM',
+              cashierName: 'Webhook Meta WhatsApp',
+              action: 'ACCUSE_WHATSAPP_WEBHOOK',
+              details: `Statut livraison WhatsApp mis à jour : ${ev.status} (${ev.metaMessageId || ev.recipientPhone || 'client'})`,
+            });
+          } else if (ev.kind === 'INBOUND_MESSAGE') {
+            const norm = normalizeE164(ev.fromPhone || '').e164 || ev.fromPhone || '';
+            const replyUpper = String(ev.replyText || '').trim().toUpperCase();
+
+            if (replyUpper === 'ANNULER') {
+              updatedQueue = updatedQueue.filter((q) => normalizeE164(q.phone).e164 !== norm);
+            } else if (replyUpper === 'STOP') {
+              updatedClients = updatedClients.map((c) =>
+                normalizeE164(c.phone).e164 === norm ? { ...c, whatsappConsent: false } : c
+              );
+            }
+
+            updatedLogs = updatedLogs.map((l) => {
+              if (normalizeE164(l.phone).e164 === norm) {
+                return {
+                  ...l,
+                  readAt: ev.receivedAt || Date.now(),
+                  status: 'READ' as const,
+                  replies: [
+                    ...(l.replies || []),
+                    {
+                      timestamp: ev.receivedAt || Date.now(),
+                      text: ev.replyText || '',
+                      fromPhone: norm,
+                    },
+                  ],
+                };
+              }
+              return l;
+            });
+
+            newAudits.push({
+              id: `aud-wa-in-${ev.id}`,
+              timestamp: ev.receivedAt || Date.now(),
+              userRole: 'CLIENT',
+              cashierName: 'Webhook Meta WhatsApp',
+              action: 'REPONSE_WHATSAPP_WEBHOOK',
+              details: `Message entrant WhatsApp "${ev.replyText || ''}" reçu de ${norm}`,
+            });
+          }
+        });
+
+        return {
+          ...prev,
+          notificationLogs: updatedLogs,
+          queue: updatedQueue,
+          clients: updatedClients,
+          auditLogs: [...newAudits.reverse(), ...prev.auditLogs],
+        };
+      });
+    } catch {
+      // Résilience hors-ligne
+    }
+  };
+
+  useEffect(() => {
+    void pollWhatsAppWebhookEvents();
+    const waInterval = setInterval(() => {
+      void pollWhatsAppWebhookEvents();
+    }, 5000);
+    return () => clearInterval(waInterval);
+  }, []);
+
+  // Évaluateur automatique des horaires d'éclairage & climatisation
+  const evaluateLightingACSchedule = (
+    devices: DomotiqueDevice[],
+    settings: SystemSettings,
+    force = false
+  ): { changed: boolean; nextDevices: DomotiqueDevice[]; summaryDetails: string[] } => {
+    const sched = settings.lightingACSchedule;
+    if (!sched || !sched.enabled) {
+      return { changed: false, nextDevices: devices, summaryDetails: [] };
+    }
+
+    const now = new Date();
+    const nowMinutes = now.getHours() * 60 + now.getMinutes();
+    const shouldLightOn = isTimeWithinSlot(nowMinutes, sched.lightOnTime, sched.lightOffTime);
+    const shouldAcOn = isTimeWithinSlot(nowMinutes, sched.acOnTime, sched.acOffTime);
+
+    let changed = false;
+    const summaryDetails: string[] = [];
+
+    const nextDevices = devices.map((d) => {
+      if (d.type === 'AMBIENT_LIGHT') {
+        const targetState: 'ON' | 'OFF' = shouldLightOn ? 'ON' : 'OFF';
+        if (d.state !== targetState || force) {
+          if (d.state !== targetState) {
+            changed = true;
+            summaryDetails.push(`${d.name} → ${targetState}`);
+          }
+          mqttGateway.publish(`${d.relayTopic}/set`, targetState);
+          return { ...d, state: targetState, watts: targetState === 'ON' ? 85 : 0 };
+        }
+      } else if (d.type === 'AIR_CONDITIONER' || d.type === 'EXHAUST_FAN') {
+        const targetState: 'ON' | 'OFF' = shouldAcOn ? 'ON' : 'OFF';
+        if (d.state !== targetState || force) {
+          if (d.state !== targetState) {
+            changed = true;
+            summaryDetails.push(`${d.name} → ${targetState}`);
+          }
+          mqttGateway.publish(`${d.relayTopic}/set`, targetState);
+          return {
+            ...d,
+            state: targetState,
+            watts: targetState === 'ON' ? (d.type === 'AIR_CONDITIONER' ? 1350 : 95) : 0,
+          };
+        }
+      }
+      return d;
+    });
+
+    return { changed, nextDevices, summaryDetails };
+  };
+
+  const applyLightingScheduleNow = () => {
+    setAppState((prev) => {
+      const { nextDevices, summaryDetails } = evaluateLightingACSchedule(prev.domotiqueDevices, prev.settings, true);
+      const now = new Date();
+      const audit: AuditLog = {
+        id: 'aud-dom-sched-' + Date.now(),
+        timestamp: Date.now(),
+        userRole: prev.currentRole,
+        cashierName: prev.currentUser || 'Automate Domotique',
+        action: 'SYNCHRONISATION_HORAIRE_DOMOTIQUE',
+        details:
+          summaryDetails.length > 0
+            ? `Application horaire éclairage/clim (${now.toTimeString().slice(0, 5)}) : ${summaryDetails.join(', ')}`
+            : `Vérification horaire éclairage/clim (${now.toTimeString().slice(0, 5)}) appliquée sur tous les équipements auxiliaires`,
+      };
+      return {
+        ...prev,
+        domotiqueDevices: nextDevices,
+        auditLogs: [audit, ...prev.auditLogs],
+      };
+    });
+  };
 
   // Moteur de temps réel (Tick 1 seconde précis avec libération automatique - Section 2.17)
   useEffect(() => {
@@ -305,15 +553,31 @@ export default function App() {
             stateChanged = true;
             const nextSecs = st.remainingSeconds - 1;
 
-            // Alerte 5 minutes (carillon doux)
+            // Alerte 5 minutes (carillon doux + alerte parlante FR)
             if (nextSecs === 300 && prev.settings.soundAlertsEnabled) {
-              soundService.playSessionEndAlert(false);
+              const dedupKey = `${st.id}-${st.currentTicketId || 'none'}-300`;
+              if (!spokenAlertDedupRef.current.has(dedupKey)) {
+                spokenAlertDedupRef.current.add(dedupKey);
+                soundService.playSession5MinAlert(
+                  st.name,
+                  st.clientName,
+                  prev.settings.voiceAlertsEnabled ?? true
+                );
+              }
             }
 
-            // Alerte 1 minute (alerte sonore + bannière amber)
+            // Alerte 1 minute (alerte sonore + alerte parlante + bannière amber)
             if (nextSecs === 60) {
               if (prev.settings.soundAlertsEnabled) {
-                soundService.playSessionEndAlert(true);
+                const dedupKey = `${st.id}-${st.currentTicketId || 'none'}-60`;
+                if (!spokenAlertDedupRef.current.has(dedupKey)) {
+                  spokenAlertDedupRef.current.add(dedupKey);
+                  soundService.playSession1MinAlert(
+                    st.name,
+                    st.clientName,
+                    prev.settings.voiceAlertsEnabled ?? true
+                  );
+                }
               }
               newWarnings.push({ stationId: st.id, clientName: st.clientName || 'Joueur' });
             } else if (nextSecs < 60 && nextSecs > 0) {
@@ -323,7 +587,15 @@ export default function App() {
             // At 0m : Libération automatique du poste (Section 2.17)
             if (nextSecs === 0) {
               if (prev.settings.soundAlertsEnabled) {
-                soundService.playSessionEndAlert(true);
+                const dedupKey = `${st.id}-${st.currentTicketId || 'none'}-0`;
+                if (!spokenAlertDedupRef.current.has(dedupKey)) {
+                  spokenAlertDedupRef.current.add(dedupKey);
+                  soundService.playSessionEndSpokenAlert(
+                    st.name,
+                    st.clientName,
+                    prev.settings.voiceAlertsEnabled ?? true
+                  );
+                }
               }
 
               // Chercher le ticket associé
@@ -493,10 +765,45 @@ export default function App() {
           });
         }
 
+        // 4. Vérification horaire automatique Éclairage & Climatisation (1x par minute)
+        let updatedDomotiqueDevices = prev.domotiqueDevices;
+        const currentDate = new Date(nowMs);
+        const currentHHMM = `${String(currentDate.getHours()).padStart(2, '0')}:${String(currentDate.getMinutes()).padStart(2, '0')}`;
+        if (updatedSettings.lightingACSchedule?.enabled && lastScheduleMinuteRef.current !== currentHHMM) {
+          lastScheduleMinuteRef.current = currentHHMM;
+          const schedEval = evaluateLightingACSchedule(prev.domotiqueDevices, updatedSettings, false);
+          if (schedEval.changed) {
+            stateChanged = true;
+            updatedDomotiqueDevices = schedEval.nextDevices;
+            newAuditLogs = [
+              {
+                id: 'aud-dom-auto-' + nowMs,
+                timestamp: nowMs,
+                userRole: 'SYSTEM',
+                cashierName: 'Automate Horaires',
+                action: 'AUTOMATION_ECLAIRAGE_CLIM',
+                details: `Bascule horaire (${currentHHMM}) : ${schedEval.summaryDetails.join(', ')}`,
+              },
+              ...newAuditLogs,
+            ];
+          }
+        }
+
+        // Synchroniser les tickets libérés automatiquement vers le serveur pour QR public
+        if (autoReleasedTickets.length > 0) {
+          const toSync = [...autoReleasedTickets];
+          setTimeout(() => {
+            toSync.forEach((t) => {
+              void syncTicketToServer(t);
+            });
+          }, 0);
+        }
+
         if (!stateChanged && autoReleasedTickets.length === 0) return prev;
         return {
           ...prev,
           stations: newStations,
+          domotiqueDevices: updatedDomotiqueDevices,
           tickets: updatedTickets,
           queue: newQueue,
           auditLogs: newAuditLogs,
@@ -534,7 +841,6 @@ export default function App() {
       // 1. Mettre à jour le poste
       const updatedStations = prev.stations.map((st) => {
         if (st.id === ticket.stationId) {
-          const isPS5 = st.type === 'PS5';
           return {
             ...st,
             status: 'occupied' as const,
@@ -548,7 +854,7 @@ export default function App() {
             totalDurationMinutes: ticket.durationMinutes,
             relayState: true,
             screenRelayState: true,
-            currentWatts: isPS5 ? 210 : 135,
+            currentWatts: getConsoleWatts(st.type),
             lastUpdated: Date.now(),
           };
         }
@@ -558,7 +864,7 @@ export default function App() {
       // 2. Mettre à jour l'équipement domotique
       const updatedDevices = prev.domotiqueDevices.map((d) => {
         if (d.stationId === ticket.stationId) {
-          return { ...d, state: 'ON' as const, watts: ticket.stationType === 'PS5' ? 210 : 135 };
+          return { ...d, state: 'ON' as const, watts: getConsoleWatts(ticket.stationType) };
         }
         return d;
       });
@@ -572,7 +878,7 @@ export default function App() {
         const perk = prev.tierRules.perks[selectedClient.tier];
         const pointsMultiplier = perk.pointMultiplier || 1.0;
         const baseEarned = Math.floor(ticket.durationMinutes / prev.settings.pointEarnRateMinutes);
-        const pointsEarned = Math.round(baseEarned * pointsMultiplier * (ticket.stationType === 'PS5' ? 2 : 1));
+        const pointsEarned = Math.round(baseEarned * pointsMultiplier * (isHighTierConsole(ticket.stationType) ? 2 : 1));
         const pointsSpent = payWithPoints ? Math.round(ticket.amountCDF / 15) : 0;
 
         // Nouvelle session pour historique 90j
@@ -684,13 +990,24 @@ export default function App() {
         }
       }
 
-      // 4. Mettre à jour la caisse
+      // 4. Mettre à jour la caisse (avec support CASH_CDF, CASH_USD, ILLICO_CASH, Mobile Money et Paiement MIXED)
+      const mb = ticket.paymentMethod === 'MIXED' ? ticket.mixedBreakdown : undefined;
+      const addCashCDF = mb ? mb.cashCDF || 0 : ticket.paymentMethod === 'CASH_CDF' ? ticket.amountCDF : 0;
+      const addCashUSD = mb ? mb.cashUSD || 0 : ticket.paymentMethod === 'CASH_USD' ? ticket.amountUSD : 0;
+      const addIllicoCDF = mb ? mb.illicoCashCDF || 0 : ticket.paymentMethod === 'ILLICO_CASH' ? ticket.amountCDF : 0;
+      const addIllicoUSD = mb ? mb.illicoCashUSD || 0 : ticket.paymentMethod === 'ILLICO_CASH' ? ticket.amountUSD : 0;
+      const isSingleMomo = ['MPESA', 'ORANGE_MONEY', 'AIRTEL_MONEY'].includes(ticket.paymentMethod);
+      const addMomoCDF = mb ? mb.momoCDF || 0 : isSingleMomo ? ticket.amountCDF : 0;
+      const addMomoUSD = mb ? mb.momoUSD || 0 : isSingleMomo ? ticket.amountUSD : 0;
+
       const updatedShift: CashShift = {
         ...prev.currentShift,
-        expectedCashCDF: prev.currentShift.expectedCashCDF + (ticket.paymentMethod === 'CASH_CDF' ? ticket.amountCDF : 0),
-        expectedCashUSD: prev.currentShift.expectedCashUSD + (ticket.paymentMethod === 'CASH_USD' ? ticket.amountUSD : 0),
-        totalMomoCDF: prev.currentShift.totalMomoCDF + (['MPESA', 'ORANGE_MONEY', 'AIRTEL_MONEY'].includes(ticket.paymentMethod) ? ticket.amountCDF : 0),
-        totalMomoUSD: prev.currentShift.totalMomoUSD + (['MPESA', 'ORANGE_MONEY', 'AIRTEL_MONEY'].includes(ticket.paymentMethod) ? ticket.amountUSD : 0),
+        expectedCashCDF: prev.currentShift.expectedCashCDF + addCashCDF,
+        expectedCashUSD: prev.currentShift.expectedCashUSD + addCashUSD,
+        totalIllicoCashCDF: (prev.currentShift.totalIllicoCashCDF || 0) + addIllicoCDF,
+        totalIllicoCashUSD: (prev.currentShift.totalIllicoCashUSD || 0) + addIllicoUSD,
+        totalMomoCDF: prev.currentShift.totalMomoCDF + addMomoCDF,
+        totalMomoUSD: prev.currentShift.totalMomoUSD + addMomoUSD,
       };
 
       // 5. Journal d'audit avec liaison caissier
@@ -700,7 +1017,7 @@ export default function App() {
         userRole: prev.currentRole,
         cashierName: prev.currentUser,
         action: 'CREATION_TICKET',
-        details: `Ticket ${ticket.ticketNumber} créé par ${prev.currentUser} pour ${ticket.clientName} (Poste ${ticket.stationId} - ${ticket.amountCDF.toLocaleString()} FC)`,
+        details: `Ticket ${ticket.ticketNumber} créé par ${prev.currentUser} pour ${ticket.clientName} (Poste ${ticket.stationId} - ${ticket.amountCDF.toLocaleString()} FC · ${ticket.paymentMethod})`,
         stationId: ticket.stationId,
       };
 
@@ -717,6 +1034,7 @@ export default function App() {
       };
     });
 
+    void syncTicketToServer(ticket);
     setIsTicketModalOpen(false);
     setCurrentPrintingTicket(ticket);
   };
@@ -745,7 +1063,7 @@ export default function App() {
 
       const updatedTickets = prev.tickets.map((tk) => {
         if (tk.ticketNumber === station.currentTicketId) {
-          return {
+          const nextTicket: Ticket = {
             ...tk,
             durationMinutes: tk.durationMinutes + minutes,
             amountCDF: tk.amountCDF + extraCDF,
@@ -753,6 +1071,10 @@ export default function App() {
             status: 'extended' as const,
             extendedCount: (tk.extendedCount || 0) + 1,
           };
+          setTimeout(() => {
+            void syncTicketToServer(nextTicket);
+          }, 0);
+          return nextTicket;
         }
         return tk;
       });
@@ -796,6 +1118,10 @@ export default function App() {
     mqttGateway.publish(`gaminghub/station/${targetStationId}/power/set`, 'ON');
 
     setAppState((prev) => {
+      const targetStation = prev.stations.find((s) => s.id === targetStationId);
+      if (!targetStation || targetStation.status !== 'available') return prev;
+      const nowTs = Date.now();
+
       const updatedStations = prev.stations.map((st) => {
         if (st.id === source.id) {
           return {
@@ -804,11 +1130,15 @@ export default function App() {
             currentTicketId: undefined,
             clientName: undefined,
             clientPhone: undefined,
+            clientId: undefined,
+            startTime: undefined,
+            endTime: undefined,
             remainingSeconds: 0,
             totalDurationMinutes: 0,
             relayState: false,
             screenRelayState: false,
             currentWatts: 0,
+            lastUpdated: nowTs,
           };
         }
         if (st.id === targetStationId) {
@@ -825,24 +1155,55 @@ export default function App() {
             totalDurationMinutes: source.totalDurationMinutes,
             relayState: true,
             screenRelayState: true,
-            currentWatts: st.type === 'PS5' ? 210 : 135,
+            currentWatts: getConsoleWatts(st.type),
+            lastUpdated: nowTs,
           };
         }
         return st;
       });
 
+      const updatedDevices = prev.domotiqueDevices.map((d) => {
+        if (d.stationId === source.id) {
+          return { ...d, state: 'OFF' as const, watts: 0 };
+        }
+        if (d.stationId === targetStationId) {
+          return { ...d, state: 'ON' as const, watts: getConsoleWatts(targetStation.type) };
+        }
+        return d;
+      });
+
+      const updatedTickets = prev.tickets.map((tk) => {
+        if (source.currentTicketId && tk.ticketNumber === source.currentTicketId) {
+          const movedTicket: Ticket = {
+            ...tk,
+            stationId: targetStation.id,
+            stationName: targetStation.name,
+            stationType: targetStation.type,
+            transferredFromStationId: tk.transferredFromStationId || source.id,
+          };
+          setTimeout(() => {
+            void syncTicketToServer(movedTicket);
+          }, 0);
+          return movedTicket;
+        }
+        return tk;
+      });
+
       const newAudit: AuditLog = {
-        id: 'aud-' + Date.now(),
-        timestamp: Date.now(),
+        id: 'aud-' + nowTs,
+        timestamp: nowTs,
         userRole: prev.currentRole,
         cashierName: prev.currentUser,
         action: 'TRANSFERT_POSTE',
-        details: `Client ${source.clientName} transféré du Poste ${source.id} vers Poste ${targetStationId} par ${prev.currentUser}`,
+        details: `Client ${source.clientName} transféré de ${source.name} (${source.type}) vers ${targetStation.name} (${targetStation.type}) par ${prev.currentUser}`,
+        stationId: targetStationId,
       };
 
       return {
         ...prev,
         stations: updatedStations,
+        domotiqueDevices: updatedDevices,
+        tickets: updatedTickets,
         auditLogs: [newAudit, ...prev.auditLogs],
       };
     });
@@ -865,19 +1226,31 @@ export default function App() {
             currentTicketId: undefined,
             clientName: undefined,
             clientPhone: undefined,
+            clientId: undefined,
+            startTime: undefined,
+            endTime: undefined,
             remainingSeconds: 0,
             totalDurationMinutes: 0,
             relayState: false,
             screenRelayState: false,
             currentWatts: 0,
+            lastUpdated: Date.now(),
           };
         }
         return st;
       });
 
+      const updatedDevices = prev.domotiqueDevices.map((d) =>
+        d.stationId === station.id ? { ...d, state: 'OFF' as const, watts: 0 } : d
+      );
+
       const updatedTickets = prev.tickets.map((t) => {
         if (t.ticketNumber === station.currentTicketId) {
-          return { ...t, status: 'completed' as const };
+          const completed: Ticket = { ...t, status: 'completed' as const, actualEndTime: Date.now() };
+          setTimeout(() => {
+            void syncTicketToServer(completed);
+          }, 0);
+          return completed;
         }
         return t;
       });
@@ -934,6 +1307,7 @@ export default function App() {
       return {
         ...prev,
         stations: updatedStations,
+        domotiqueDevices: updatedDevices,
         tickets: updatedTickets,
         queue: updatedQueue,
         auditLogs: [newAudit, ...prev.auditLogs],
@@ -988,7 +1362,7 @@ export default function App() {
             ...st,
             relayState: nextState,
             screenRelayState: nextState,
-            currentWatts: nextState ? (st.type === 'PS5' ? 200 : 130) : 0,
+            currentWatts: nextState ? getConsoleWatts(st.type) : 0,
           };
         }
         return st;
@@ -999,7 +1373,7 @@ export default function App() {
           return {
             ...d,
             state: nextState ? ('ON' as const) : ('OFF' as const),
-            watts: nextState ? (station.type === 'PS5' ? 200 : 130) : 0,
+            watts: nextState ? getConsoleWatts(station.type) : 0,
           };
         }
         return d;
@@ -1111,12 +1485,20 @@ export default function App() {
   };
 
   const handleCallQueueClient = (entryId: string) => {
-    soundService.playQueueCall();
-
     const entry = appState.queue.find(q => q.id === entryId);
+    const freeStation = entry
+      ? appState.stations.find(s => s.status === 'available' && (entry.desiredStationType === 'ANY' || s.type === entry.desiredStationType))
+      : undefined;
+
+    if (appState.settings.soundAlertsEnabled) {
+      soundService.playQueueCallAlert(
+        entry?.clientName,
+        freeStation?.id,
+        appState.settings.voiceAlertsEnabled ?? true
+      );
+    }
+
     if (entry && entry.phone && appState.whatsappConfig.autoNotifyQueueTurn) {
-      // Rechercher un poste libre disponible pour la variable {{2}}
-      const freeStation = appState.stations.find(s => s.status === 'available' && (entry.desiredStationType === 'ANY' || s.type === entry.desiredStationType));
       const stationNum = freeStation ? String(freeStation.id) : '1';
       const stationType = freeStation ? freeStation.type : (entry.desiredStationType === 'ANY' ? 'PS4' : entry.desiredStationType);
 
@@ -1158,22 +1540,30 @@ export default function App() {
     }));
   };
 
-  const handleSendWhatsAppDirect = (entry: QueueEntry) => {
+  const handleSendWhatsAppDirect = async (entry: QueueEntry) => {
     if (!entry.phone) return;
     const freeStation = appState.stations.find(s => s.status === 'available');
     const stationNum = freeStation ? String(freeStation.id) : 'Disponible';
     const stationType = freeStation ? freeStation.type : 'PS4/PS5';
+    const vars = {
+      '1': entry.clientName.split(' ')[0],
+      '2': stationNum,
+      '3': stationType,
+      '4': '3',
+    };
+    const waText = renderTemplateText('poste_pret', vars);
+    const waMeUrl = buildWaMeUrl(entry.phone, waText);
 
-    NotificationService.sendWithRetry(
+    setWhatsappToast({
+      status: 'sending',
+      message: `Envoi WhatsApp en cours vers ${entry.clientName} (${entry.phone})...`,
+    });
+
+    const finalLog = await NotificationService.sendWithRetry(
       entry.phone,
       entry.clientName,
       'poste_pret',
-      {
-        '1': entry.clientName.split(' ')[0],
-        '2': stationNum,
-        '3': stationType,
-        '4': '3',
-      },
+      vars,
       appState.whatsappConfig,
       entry.clientId,
       (newLog) => {
@@ -1183,6 +1573,25 @@ export default function App() {
         }));
       }
     );
+
+    if (finalLog.status === 'FAILED') {
+      setWhatsappToast({
+        status: 'error',
+        message: `Échec API WhatsApp pour ${entry.clientName} : ${finalLog.errorMessage || 'Erreur réseau'}.`,
+        waMeUrl,
+      });
+    } else if (finalLog.sendMode === 'SIMULATION') {
+      setWhatsappToast({
+        status: 'simulation',
+        message: `Simulation locale WhatsApp pour ${entry.clientName} (Jeton Meta non configuré).`,
+        waMeUrl,
+      });
+    } else {
+      setWhatsappToast({
+        status: 'live',
+        message: `Message WhatsApp réellement envoyé via Meta API à ${entry.clientName} !`,
+      });
+    }
   };
 
   const handleAssignToStation = (entry: QueueEntry, stationId: number) => {
@@ -1455,7 +1864,7 @@ export default function App() {
             endTime: Date.now() + 300000,
             relayState: true,
             screenRelayState: true,
-            currentWatts: st.type === 'PS5' ? 200 : 130,
+            currentWatts: getConsoleWatts(st.type),
           };
         }
         return st;
@@ -1463,12 +1872,16 @@ export default function App() {
 
       const updatedTickets = prev.tickets.map((t) => {
         if (t.id === ticket.id) {
-          return {
+          const restored: Ticket = {
             ...t,
             status: 'active' as const,
             actualEndTime: undefined,
             autoReleaseCancelledAt: Date.now(),
           };
+          setTimeout(() => {
+            void syncTicketToServer(restored);
+          }, 0);
+          return restored;
         }
         return t;
       });
@@ -1701,7 +2114,7 @@ export default function App() {
 
   const handleAddStation = (stationConfig: {
     name: string;
-    type: 'PS4' | 'PS5';
+    type: StationType;
     hardwareType: DomotiqueDevice['hardwareType'];
     ipAddress: string;
   }) => {
@@ -1846,7 +2259,8 @@ export default function App() {
 
   const handleRecordSnackCartSale = (
     cartItems: Array<{ item: SnackItem; qty: number }>,
-    paymentMethod: PaymentMethod
+    paymentMethod: PaymentMethod,
+    paymentDetails?: { paymentReference?: string; mixedBreakdown?: MixedPaymentBreakdown }
   ): SnackSale => {
     const detailedItems: SnackSaleItemDetail[] = cartItems.map(({ item, qty }) => ({
       itemId: item.id,
@@ -1877,6 +2291,8 @@ export default function App() {
       totalCDF,
       totalUSD,
       paymentMethod,
+      paymentReference: paymentDetails?.paymentReference,
+      mixedBreakdown: paymentDetails?.mixedBreakdown,
       timestamp: Date.now(),
       cashierName: appState.currentUser,
     };
@@ -1893,14 +2309,23 @@ export default function App() {
         return s;
       });
 
+      const mb = paymentMethod === 'MIXED' ? paymentDetails?.mixedBreakdown : undefined;
+      const addCashCDF = mb ? mb.cashCDF || 0 : paymentMethod === 'CASH_CDF' ? totalCDF : 0;
+      const addCashUSD = mb ? mb.cashUSD || 0 : paymentMethod === 'CASH_USD' ? totalUSD : 0;
+      const addIllicoCDF = mb ? mb.illicoCashCDF || 0 : paymentMethod === 'ILLICO_CASH' ? totalCDF : 0;
+      const addIllicoUSD = mb ? mb.illicoCashUSD || 0 : paymentMethod === 'ILLICO_CASH' ? totalUSD : 0;
+      const isSingleMomo = ['MPESA', 'ORANGE_MONEY', 'AIRTEL_MONEY'].includes(paymentMethod);
+      const addMomoCDF = mb ? mb.momoCDF || 0 : isSingleMomo ? totalCDF : 0;
+      const addMomoUSD = mb ? mb.momoUSD || 0 : isSingleMomo ? totalUSD : 0;
+
       const updatedShift: CashShift = {
         ...prev.currentShift,
-        expectedCashCDF: prev.currentShift.expectedCashCDF + (paymentMethod === 'CASH_CDF' ? totalCDF : 0),
-        expectedCashUSD: prev.currentShift.expectedCashUSD + (paymentMethod === 'CASH_USD' ? totalUSD : 0),
-        totalIllicoCashCDF: (prev.currentShift.totalIllicoCashCDF || 0) + (paymentMethod === 'ILLICO_CASH' ? totalCDF : 0),
-        totalIllicoCashUSD: (prev.currentShift.totalIllicoCashUSD || 0) + (paymentMethod === 'ILLICO_CASH' ? totalUSD : 0),
-        totalMomoCDF: prev.currentShift.totalMomoCDF + (['MPESA', 'ORANGE_MONEY', 'AIRTEL_MONEY'].includes(paymentMethod) ? totalCDF : 0),
-        totalMomoUSD: prev.currentShift.totalMomoUSD + (['MPESA', 'ORANGE_MONEY', 'AIRTEL_MONEY'].includes(paymentMethod) ? totalUSD : 0),
+        expectedCashCDF: prev.currentShift.expectedCashCDF + addCashCDF,
+        expectedCashUSD: prev.currentShift.expectedCashUSD + addCashUSD,
+        totalIllicoCashCDF: (prev.currentShift.totalIllicoCashCDF || 0) + addIllicoCDF,
+        totalIllicoCashUSD: (prev.currentShift.totalIllicoCashUSD || 0) + addIllicoUSD,
+        totalMomoCDF: prev.currentShift.totalMomoCDF + addMomoCDF,
+        totalMomoUSD: prev.currentShift.totalMomoUSD + addMomoUSD,
         totalSnacksCDF: prev.currentShift.totalSnacksCDF + totalCDF,
         totalSnacksUSD: prev.currentShift.totalSnacksUSD + totalUSD,
       };
@@ -2086,12 +2511,21 @@ export default function App() {
     } else {
       setAppState((prev) => {
         const rounding = updatedSettings.cdfRoundingRule || 100;
+        const rate = updatedSettings.exchangeRate || 2800;
+        const decimals = updatedSettings.usdDecimals ?? 2;
         const rateChanged = updatedSettings.exchangeRate !== prev.settings.exchangeRate;
         const updatedPlans = rateChanged
-          ? prev.pricingPlans.map((plan) => ({
-              ...plan,
-              priceCDF: Math.max(100, Math.round((plan.priceUSD * updatedSettings.exchangeRate) / rounding) * rounding),
-            }))
+          ? prev.pricingPlans.map((plan) =>
+              updatedSettings.primaryCurrency === 'USD'
+                ? {
+                    ...plan,
+                    priceCDF: Math.max(100, Math.round((plan.priceUSD * rate) / rounding) * rounding),
+                  }
+                : {
+                    ...plan,
+                    priceUSD: Number(((plan.priceCDF || 0) / rate).toFixed(decimals)),
+                  }
+            )
           : prev.pricingPlans;
 
         const overrides = updatedSettings.stationSpecificOverrides || {};
@@ -2364,6 +2798,43 @@ export default function App() {
     );
   };
 
+  // Vue publique autonome de vérification de ticket via QR Code (/t/:token ou ?t=:token)
+  if (verificationToken) {
+    return (
+      <div className="relative min-h-screen bg-[#090D16] text-slate-100 flex flex-col font-sans overflow-x-hidden">
+        {renderGlobalBackground()}
+        <main className="relative z-10 flex-1 w-full max-w-4xl mx-auto p-4 lg:p-6">
+          <PublicTicketVerificationView
+            token={verificationToken}
+            tickets={appState.tickets}
+            stations={appState.stations}
+            isStaffAuthenticated={appState.isStaffAuthenticated}
+            onBack={() => {
+              setVerificationToken(null);
+              if (typeof window !== 'undefined') {
+                window.history.replaceState({}, '', '/');
+              }
+            }}
+            onOpenCustomerPortal={() => {
+              setVerificationToken(null);
+              if (typeof window !== 'undefined') {
+                window.history.replaceState({}, '', '/?tab=client');
+              }
+              setActiveTab('customer_portal');
+            }}
+            onOpenStaffTicketAction={(ticket) => {
+              setVerificationToken(null);
+              if (typeof window !== 'undefined') {
+                window.history.replaceState({}, '', '/');
+              }
+              setCurrentPrintingTicket(ticket);
+            }}
+          />
+        </main>
+      </div>
+    );
+  }
+
   // Vue isolée Espace Client (le joueur ne voit strictement que ses informations et rien d'autre)
   if (activeTab === 'customer_portal' && !verificationToken) {
     return (
@@ -2530,6 +3001,8 @@ export default function App() {
         isInstallable={isInstallable}
         onInstall={handleInstallApp}
         waitingCount={waitingCount}
+        pendingSyncCount={pendingSyncCount}
+        onSyncNow={handleSyncNow}
       />
 
       {/* Bannière d'Annulation de Libération Automatique (2 minutes - Modification 4) */}
@@ -2585,13 +3058,66 @@ export default function App() {
         </div>
       )}
 
-      {/* Bannière Hors-Ligne Résilience */}
+      {/* Retour d'envoi WhatsApp (Meta API ou Simulation + lien direct wa.me) */}
+      {whatsappToast && (
+        <div
+          className={`border-b px-4 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs ${
+            whatsappToast.status === 'error'
+              ? 'bg-rose-500/20 border-rose-500/40 text-rose-200'
+              : whatsappToast.status === 'simulation'
+              ? 'bg-amber-500/20 border-amber-500/40 text-amber-200'
+              : whatsappToast.status === 'live'
+              ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-200'
+              : 'bg-blue-500/20 border-blue-500/40 text-blue-200'
+          }`}
+        >
+          <div className="flex items-center gap-2 font-semibold">
+            <MessageSquare className="w-4 h-4 shrink-0" />
+            <span>{whatsappToast.message}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            {whatsappToast.waMeUrl && (
+              <a
+                href={whatsappToast.waMeUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg inline-flex items-center gap-1.5 transition"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                <span>Ouvrir dans WhatsApp (wa.me)</span>
+              </a>
+            )}
+            <button
+              onClick={() => setWhatsappToast(null)}
+              className="text-slate-300 hover:text-white p-1"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Bannière Hors-Ligne Résilience & Synchronisation Différée */}
       {!isOnline && (
         <div className="bg-amber-500/20 border-b border-amber-500/40 px-4 py-2 text-center text-xs text-amber-200 font-semibold flex items-center justify-center gap-2">
           <AlertTriangle className="w-4 h-4 text-amber-400" />
           <span>
-            Mode Hors-Ligne Actif — Enregistrement local résilient aux délestages et synchronisation en arrière-plan.
+            Mode Hors-Ligne Actif — Enregistrement local résilient aux délestages
+            {pendingSyncCount > 0 ? ` (${pendingSyncCount} opération(s) en attente de synchronisation).` : ' et synchronisation automatique à la reconnexion.'}
           </span>
+        </div>
+      )}
+
+      {isOnline && pendingSyncCount > 0 && (
+        <div className="bg-cyan-500/15 border-b border-cyan-500/40 px-4 py-2 flex items-center justify-center gap-3 text-xs text-cyan-200 font-semibold">
+          <span>{pendingSyncCount} opération(s) créée(s) hors-ligne en attente de synchronisation serveur.</span>
+          <button
+            type="button"
+            onClick={() => void handleSyncNow()}
+            className="px-3 py-1 bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-black rounded-lg text-[11px] cursor-pointer transition"
+          >
+            Synchroniser maintenant
+          </button>
         </div>
       )}
 
@@ -2613,23 +3139,6 @@ export default function App() {
 
       {/* Contenu Principal */}
       <main className="relative z-10 flex-1 max-w-7xl w-full mx-auto p-4 lg:p-6 space-y-6">
-        {/* Vue Publique Vérification de Ticket (Modification 2) */}
-        {verificationToken ? (
-          <PublicTicketVerificationView
-            token={verificationToken}
-            tickets={appState.tickets}
-            stations={appState.stations}
-            isStaffAuthenticated={appState.isStaffAuthenticated}
-            onOpenCustomerPortal={(clientId) => {
-              setVerificationToken(null);
-              setActiveTab('customer_portal');
-            }}
-            onOpenStaffTicketAction={(ticket) => {
-              setVerificationToken(null);
-              setCurrentPrintingTicket(ticket);
-            }}
-          />
-        ) : (
           <>
             {/* Onglet 1 : Tableau de bord 10 Postes Live */}
             {activeTab === 'stations' && (
@@ -2737,11 +3246,28 @@ export default function App() {
             tickets={appState.tickets}
             stations={appState.stations}
             onPrintTicket={(ticket) => setCurrentPrintingTicket(ticket)}
+            onTransferTicket={(ticket) => {
+              const occupiedStation = appState.stations.find(
+                (s) => s.status === 'occupied' && (s.currentTicketId === ticket.ticketNumber || s.id === ticket.stationId)
+              );
+              if (occupiedStation) {
+                setTransferModalStation(occupiedStation);
+              }
+            }}
             onRefundTicket={(ticketId) => {
               if (confirm('Voulez-vous annuler et rembourser ce ticket ?')) {
                 setAppState(prev => ({
                   ...prev,
-                  tickets: prev.tickets.map(t => t.id === ticketId ? { ...t, status: 'refunded' as const } : t),
+                  tickets: prev.tickets.map(t => {
+                    if (t.id === ticketId) {
+                      const refunded: Ticket = { ...t, status: 'refunded' as const };
+                      setTimeout(() => {
+                        void syncTicketToServer(refunded);
+                      }, 0);
+                      return refunded;
+                    }
+                    return t;
+                  }),
                   auditLogs: [
                     {
                       id: 'aud-' + Date.now(),
@@ -2802,9 +3328,12 @@ export default function App() {
 
               setAppState(prev => ({
                 ...prev,
-                domotiqueDevices: prev.domotiqueDevices.map(d =>
-                  d.id === deviceId ? { ...d, state: nextState, watts: nextState === 'ON' ? (d.stationId ? (d.stationId > 8 ? 200 : 130) : 80) : 0 } : d
-                ),
+                domotiqueDevices: prev.domotiqueDevices.map((d) => {
+                  if (d.id !== deviceId) return d;
+                  const linkedSt = d.stationId ? prev.stations.find((s) => s.id === d.stationId) : undefined;
+                  const watts = nextState === 'ON' ? (linkedSt ? getConsoleWatts(linkedSt.type) : 80) : 0;
+                  return { ...d, state: nextState, watts };
+                }),
               }));
             }}
             onMasterPowerOff={handleMasterPowerOff}
@@ -2815,6 +3344,7 @@ export default function App() {
                 settings: { ...prev.settings, ...newSettings },
               }));
             }}
+            onApplyScheduleNow={applyLightingScheduleNow}
           />
         )}
 
@@ -2847,6 +3377,8 @@ export default function App() {
             devices={appState.domotiqueDevices}
             settings={appState.settings}
             tierRules={appState.tierRules}
+            snackSales={appState.snackSales}
+            shiftHistory={appState.shiftHistory}
             onExportJSON={handleExportJSON}
             onExportCSV={handleExportCSV}
           />
@@ -2863,6 +3395,7 @@ export default function App() {
             tierRules={appState.tierRules}
             onLogout={() => setActiveTab('stations')}
             onClientCreatePin={handleClientCreatePin}
+            onClientUpdateAvatar={handleClientUpdateAvatar}
           />
         )}
 
@@ -2898,6 +3431,8 @@ export default function App() {
               onCancelScheduledChange={handleCancelScheduledSetting}
               currentStaffUser={appState.currentStaffUser}
               onOpenStaffManagement={() => setIsStaffManagementOpen(true)}
+              whatsappConfig={appState.whatsappConfig}
+              onOpenWhatsAppConfig={() => setIsWhatsAppConfigOpen(true)}
               onExportConfig={handleExportConfigJSON}
               onImportConfig={handleImportConfigJSON}
             />
@@ -2928,7 +3463,6 @@ export default function App() {
           )
         )}
           </>
-        )}
       </main>
 
       {/* Modal Express Ticket (< 15s) avec remises automatiques selon statut */}
@@ -2957,22 +3491,40 @@ export default function App() {
       {/* Modal Transfert Client vers Poste Libre */}
       {transferModalStation && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
-          <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-sm p-5 space-y-4 shadow-2xl">
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-md p-5 space-y-4 shadow-2xl">
             <div className="flex items-center justify-between">
               <h3 className="text-base font-bold text-white flex items-center gap-2">
                 <ArrowRightLeft className="w-5 h-5 text-blue-400" />
                 <span>Transférer le Joueur</span>
               </h3>
-              <button onClick={() => setTransferModalStation(null)} className="p-1 text-slate-400 hover:text-white">
+              <button onClick={() => setTransferModalStation(null)} className="p-1 text-slate-400 hover:text-white cursor-pointer">
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <p className="text-xs text-slate-300">
-              Transférer <strong className="text-white">{transferModalStation.clientName}</strong> (Poste {transferModalStation.id}) vers un poste disponible :
-            </p>
+            <div className="bg-slate-800/70 border border-slate-700 rounded-xl p-3 text-xs space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="text-slate-400">Session active :</span>
+                <span className="font-mono font-bold text-cyan-300">
+                  {Math.floor(transferModalStation.remainingSeconds / 60)}:
+                  {String(transferModalStation.remainingSeconds % 60).padStart(2, '0')} restantes
+                </span>
+              </div>
+              <p className="text-slate-300">
+                Transférer <strong className="text-white">{transferModalStation.clientName}</strong> depuis{' '}
+                <strong className="text-blue-300">
+                  {transferModalStation.name} ({transferModalStation.type})
+                </strong>{' '}
+                vers un poste libre :
+              </p>
+              {transferModalStation.currentTicketId && (
+                <div className="text-[11px] font-mono text-slate-400">
+                  Ticket : {transferModalStation.currentTicketId}
+                </div>
+              )}
+            </div>
 
-            <div className="space-y-1.5 max-h-48 overflow-y-auto">
+            <div className="space-y-1.5 max-h-56 overflow-y-auto">
               {appState.stations.filter(s => s.status === 'available').length === 0 ? (
                 <div className="py-4 text-center text-xs text-slate-500">
                   Aucun autre poste libre actuellement.
@@ -2980,18 +3532,29 @@ export default function App() {
               ) : (
                 appState.stations
                   .filter(s => s.status === 'available')
-                  .map((freeSt) => (
-                    <button
-                      key={freeSt.id}
-                      onClick={() => executeTransfer(freeSt.id)}
-                      className="w-full text-left px-3 py-2 bg-slate-800 hover:bg-blue-600 rounded-xl text-xs font-semibold text-slate-200 hover:text-white flex items-center justify-between transition"
-                    >
-                      <span className="font-bold">Poste {freeSt.id}</span>
-                      <span className="font-mono text-[10px] px-2 py-0.5 rounded bg-slate-900/60 text-cyan-300">
-                        {freeSt.type}
-                      </span>
-                    </button>
-                  ))
+                  .map((freeSt) => {
+                    const isDifferentType = freeSt.type !== transferModalStation.type;
+                    return (
+                      <button
+                        key={freeSt.id}
+                        type="button"
+                        onClick={() => executeTransfer(freeSt.id)}
+                        className="w-full text-left px-3 py-2.5 bg-slate-800 hover:bg-blue-600 rounded-xl text-xs font-semibold text-slate-200 hover:text-white flex items-center justify-between transition cursor-pointer"
+                      >
+                        <div>
+                          <div className="font-bold">{freeSt.name}</div>
+                          {isDifferentType && (
+                            <div className="text-[10px] text-amber-300 font-normal">
+                              Changement de console ({transferModalStation.type} → {freeSt.type})
+                            </div>
+                          )}
+                        </div>
+                        <span className={`font-mono text-[10px] px-2 py-0.5 rounded ${freeSt.type === 'PS5' ? 'bg-purple-500/20 text-purple-300' : 'bg-slate-900/60 text-cyan-300'}`}>
+                          {freeSt.type}
+                        </span>
+                      </button>
+                    );
+                  })
               )}
             </div>
           </div>
@@ -3146,6 +3709,9 @@ export default function App() {
             ...prev,
             notificationLogs: [newLog, ...prev.notificationLogs],
           }));
+        }}
+        onWebhookEventDispatched={() => {
+          void pollWhatsAppWebhookEvents();
         }}
         onSimulateWebhookReply={(replyText, fromPhone) => {
           const norm = normalizeE164(fromPhone).e164 || fromPhone;

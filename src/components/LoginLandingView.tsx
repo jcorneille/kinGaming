@@ -50,10 +50,9 @@ export const LoginLandingView: React.FC<LoginLandingViewProps> = ({
 
   // ================= ÉTATS DU PERSONNEL =================
   const [staffAuthMode, setStaffAuthMode] = useState<'PIN' | 'PASSWORD'>('PIN');
-  const [staffUsername, setStaffUsername] = useState<string>('erick');
+  const [staffUsername, setStaffUsername] = useState<string>('');
   const [staffPassword, setStaffPassword] = useState<string>('');
   const [staffPin, setStaffPin] = useState<string>('');
-  const [selectedStaffUser, setSelectedStaffUser] = useState<StaffUser>(staffUsers[2] || staffUsers[0]);
   const [showPassword, setShowPassword] = useState<boolean>(false);
   const [staffError, setStaffError] = useState<string | null>(null);
   const [staffSuccess, setStaffSuccess] = useState<string | null>(null);
@@ -72,33 +71,17 @@ export const LoginLandingView: React.FC<LoginLandingViewProps> = ({
   // Accordéon des comptes de test / démo pour test immédiat
   const [showDemoCredentials, setShowDemoCredentials] = useState<boolean>(false);
 
-  // Synchroniser la sélection de profil
-  const handleSelectStaffUser = (userId: string) => {
-    const user = staffUsers.find((u) => u.id === userId);
-    if (user) {
-      setSelectedStaffUser(user);
-      setStaffUsername(user.username);
-      setStaffPin('');
-      setStaffPassword('');
-      setStaffError(null);
-    }
-  };
-
   // ================= VALIDATION RÉELLE DE LA CONNEXION PERSONNEL =================
   const handleStaffLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setStaffError(null);
     setStaffSuccess(null);
 
-    // 1. Trouver l'utilisateur
-    let user: StaffUser | undefined;
-    if (staffAuthMode === 'PIN') {
-      user = staffUsers.find((u) => u.id === selectedStaffUser.id) || selectedStaffUser;
-    } else {
-      user = staffUsers.find(
-        (u) => u.username.toLowerCase() === staffUsername.trim().toLowerCase()
-      );
-    }
+    // 1. Trouver l'utilisateur par son identifiant saisi manuellement
+    const trimmedUsername = staffUsername.trim().toLowerCase();
+    let user = staffUsers.find(
+      (u) => u.username.toLowerCase() === trimmedUsername
+    );
 
     if (!user) {
       setStaffPin('');
@@ -308,9 +291,8 @@ export const LoginLandingView: React.FC<LoginLandingViewProps> = ({
 
   // Raccourci pour remplir rapidement des identifiants valides de test
   const applyDemoStaff = (username: string, pin: string, pass: string, mode: 'PIN' | 'PASSWORD') => {
-    const user = staffUsers.find((u) => u.username === username) || staffUsers[0];
-    setSelectedStaffUser(user);
-    setStaffUsername(user.username);
+    const user = staffUsers.find((u) => u.username === username);
+    setStaffUsername(user?.username || username);
     setStaffAuthMode(mode);
     setStaffPin(pin);
     setStaffPassword(pass);
@@ -562,40 +544,31 @@ export const LoginLandingView: React.FC<LoginLandingViewProps> = ({
                   <form onSubmit={handleStaffLoginSubmit} className="space-y-3.5">
                     {staffAuthMode === 'PIN' ? (
                       <>
-                        {/* Sélection du profil caissier/responsable */}
+                        {/* Saisie manuelle de l'identifiant (aucune liste d'utilisateurs affichée) */}
                         <div className="space-y-1">
                           <label className="text-xs font-semibold text-slate-300 block">
-                            Sélectionner votre profil
+                            Identifiant utilisateur
                           </label>
-                          <select
-                            value={selectedStaffUser.id}
-                            onChange={(e) => handleSelectStaffUser(e.target.value)}
-                            className="w-full bg-black/40 backdrop-blur-sm border border-white/20 rounded-xl px-3 py-2 text-white text-xs font-medium focus:ring-2 focus:ring-blue-500 outline-none transition"
-                          >
-                            {staffUsers.map((u) => (
-                              <option key={u.id} value={u.id} className="bg-slate-900 text-white">
-                                {u.fullName} — [{u.role}] {u.isBlocked ? '⚠️ [COMPTE BLOQUÉ]' : ''}
-                              </option>
-                            ))}
-                          </select>
-                          {selectedStaffUser.isBlocked && (
-                            <div className="p-2 bg-rose-500/20 border border-rose-500/40 rounded-lg text-[11px] text-rose-300 flex items-center gap-1.5 mt-1">
-                              <AlertTriangle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
-                              <span>Ce compte est bloqué. Seul l'administrateur peut le débloquer.</span>
-                            </div>
-                          )}
+                          <input
+                            type="text"
+                            value={staffUsername}
+                            onChange={(e) => {
+                              setStaffUsername(e.target.value);
+                              setStaffError(null);
+                            }}
+                            placeholder="Entrez votre identifiant"
+                            autoComplete="username"
+                            autoFocus
+                            className="w-full bg-black/40 backdrop-blur-sm border border-white/20 rounded-xl px-3.5 py-2.5 text-white font-mono text-xs focus:ring-2 focus:ring-blue-500 outline-none transition"
+                            required
+                          />
                         </div>
 
                         {/* Saisie du code PIN */}
                         <div className="space-y-1">
-                          <div className="flex justify-between items-center">
-                            <label className="text-xs font-semibold text-slate-300">
-                              Code PIN de prise de service (4 chiffres)
-                            </label>
-                            <span className="text-[10px] text-blue-400 font-mono">
-                              {selectedStaffUser.role === 'ADMIN' ? 'PIN: 9999' : 'PIN: 1234'}
-                            </span>
-                          </div>
+                          <label className="text-xs font-semibold text-slate-300 block">
+                            Code PIN de prise de service (4 chiffres)
+                          </label>
                           <div className="relative">
                             <input
                               type={showPassword ? 'text' : 'password'}
@@ -603,7 +576,6 @@ export const LoginLandingView: React.FC<LoginLandingViewProps> = ({
                               value={staffPin}
                               onChange={(e) => setStaffPin(e.target.value.replace(/\D/g, ''))}
                               placeholder="••••"
-                              autoFocus
                               className="w-full bg-black/40 backdrop-blur-sm border border-white/20 rounded-xl px-3.5 py-2.5 text-white font-mono text-center text-lg tracking-[0.4em] focus:ring-2 focus:ring-blue-500 outline-none transition"
                               required
                             />

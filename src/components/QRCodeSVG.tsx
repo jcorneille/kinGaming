@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useMemo } from 'react';
+import QRCode from 'qrcode';
 
 interface QRCodeSVGProps {
   value: string;
@@ -8,8 +9,8 @@ interface QRCodeSVGProps {
 }
 
 /**
- * Générateur SVG de QR Code autonome haute précision
- * Basé sur une matrice 21x21 (Version 1) avec encodage des données et motifs de repérage standards.
+ * Générateur SVG de QR Code ISO 18004 réel et scannable (bibliothèque `qrcode`).
+ * Rendu synchrone haute précision avec marge silencieuse (quiet zone) adaptée aux imprimantes thermiques 58/80mm.
  */
 export const QRCodeSVG: React.FC<QRCodeSVGProps> = ({
   value,
@@ -17,86 +18,48 @@ export const QRCodeSVG: React.FC<QRCodeSVGProps> = ({
   fgColor = '#000000',
   bgColor = '#ffffff',
 }) => {
-  // Matrice 21x21
-  const matrixSize = 21;
-  const grid: boolean[][] = Array.from({ length: matrixSize }, () => Array(matrixSize).fill(false));
-
-  // 1. Ajouter les trois carrés de repérage (Finder Patterns)
-  const addFinderPattern = (startX: number, startY: number) => {
-    for (let r = 0; r < 7; r++) {
-      for (let c = 0; c < 7; c++) {
-        const isBorder = r === 0 || r === 6 || c === 0 || c === 6;
-        const isCenter = r >= 2 && r <= 4 && c >= 2 && c <= 4;
-        if (isBorder || isCenter) {
-          grid[startY + r][startX + c] = true;
+  const { moduleCount, pathData } = useMemo(() => {
+    const safeValue = value && value.trim().length > 0 ? value : 'https://kingaminghub.cd';
+    try {
+      const qr = QRCode.create(safeValue, { errorCorrectionLevel: 'M' });
+      const count = qr.modules.size;
+      const data = qr.modules.data;
+      let path = '';
+      for (let r = 0; r < count; r++) {
+        for (let c = 0; c < count; c++) {
+          if (data[r * count + c]) {
+            path += `M${c} ${r}h1v1h-1z`;
+          }
         }
       }
+      return { moduleCount: count, pathData: path };
+    } catch {
+      return { moduleCount: 21, pathData: '' };
     }
-  };
+  }, [value]);
 
-  addFinderPattern(0, 0); // Haut-Gauche
-  addFinderPattern(14, 0); // Haut-Droite
-  addFinderPattern(0, 14); // Bas-Gauche
-
-  // 2. Bandes de synchronisation (Timing Patterns)
-  for (let i = 8; i < 13; i++) {
-    grid[6][i] = i % 2 === 0;
-    grid[i][6] = i % 2 === 0;
-  }
-
-  // 3. Point d'alignement fixe
-  grid[13][13] = true;
-
-  // 4. Encodage pseudo-déterministe de la chaîne fournie pour créer le motif dense
-  let hash = 0;
-  for (let i = 0; i < value.length; i++) {
-    hash = (hash << 5) - hash + value.charCodeAt(i);
-    hash |= 0;
-  }
-
-  for (let r = 0; r < matrixSize; r++) {
-    for (let c = 0; c < matrixSize; c++) {
-      // Éviter de modifier les motifs de repérage
-      const inFinderTopLeft = r <= 7 && c <= 7;
-      const inFinderTopRight = r <= 7 && c >= 13;
-      const inFinderBottomLeft = r >= 13 && c <= 7;
-      const inTiming = (r === 6 && c >= 7 && c <= 13) || (c === 6 && r >= 7 && r <= 13);
-
-      if (!inFinderTopLeft && !inFinderTopRight && !inFinderBottomLeft && !inTiming) {
-        const bit = ((hash ^ (r * 31 + c * 17)) >>> ((r + c) % 16)) & 1;
-        grid[r][c] = bit === 1;
-      }
-    }
-  }
-
-  // Rendu sous forme de rectangles SVG groupés
-  const cellSize = size / matrixSize;
+  const margin = 2;
+  const viewBoxSize = moduleCount + margin * 2;
 
   return (
     <svg
       width={size}
       height={size}
-      viewBox={`0 0 ${size} ${size}`}
-      fill="none"
+      viewBox={`-${margin} -${margin} ${viewBoxSize} ${viewBoxSize}`}
+      shapeRendering="crispEdges"
       xmlns="http://www.w3.org/2000/svg"
+      role="img"
+      aria-label="QR Code de vérification du ticket"
       className="inline-block"
     >
-      <rect width={size} height={size} fill={bgColor} />
-      {grid.map((row, r) =>
-        row.map((active, c) => {
-          if (!active) return null;
-          return (
-            <rect
-              key={`${r}-${c}`}
-              x={c * cellSize}
-              y={r * cellSize}
-              width={cellSize + 0.2}
-              height={cellSize + 0.2}
-              fill={fgColor}
-            />
-          );
-        })
-      )}
+      <rect
+        x={-margin}
+        y={-margin}
+        width={viewBoxSize}
+        height={viewBoxSize}
+        fill={bgColor}
+      />
+      {pathData && <path d={pathData} fill={fgColor} />}
     </svg>
   );
 };

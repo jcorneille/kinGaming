@@ -12,7 +12,7 @@ import {
   Wallet,
   Smartphone
 } from 'lucide-react';
-import { CashShift, SnackItem, SnackSale, PaymentMethod, SystemSettings, Ticket } from '../types';
+import { CashShift, SnackItem, SnackSale, PaymentMethod, SystemSettings, Ticket, MixedPaymentBreakdown } from '../types';
 import { Pagination } from './Pagination';
 
 const PAGE_SIZE = 10;
@@ -26,7 +26,11 @@ interface CashShiftViewProps {
   cashierName: string;
   tickets?: Ticket[];
   onRecordSnackSale: (item: SnackItem, quantity: number, paymentMethod: PaymentMethod) => void;
-  onRecordSnackCartSale?: (items: Array<{ item: SnackItem; qty: number }>, paymentMethod: PaymentMethod) => SnackSale;
+  onRecordSnackCartSale?: (
+    items: Array<{ item: SnackItem; qty: number }>,
+    paymentMethod: PaymentMethod,
+    paymentDetails?: { paymentReference?: string; mixedBreakdown?: MixedPaymentBreakdown }
+  ) => SnackSale;
   onPrintSnackSale?: (sale: SnackSale) => void;
   onCloseShift: (countedCDF: number, countedUSD: number, notes?: string) => void;
   onOpenNewShift: (openingFloatCDF: number, openingFloatUSD: number) => void;
@@ -51,6 +55,15 @@ export const CashShiftView: React.FC<CashShiftViewProps> = ({
   // Vente de snacks (panier rapide)
   const [cart, setCart] = useState<{ [itemId: string]: number }>({});
   const [snackPaymentMethod, setSnackPaymentMethod] = useState<PaymentMethod>('CASH_CDF');
+  const [snackPaymentRef, setSnackPaymentRef] = useState<string>('');
+  const [snackMixedCashCDF, setSnackMixedCashCDF] = useState<string>('');
+  const [snackMixedCashUSD, setSnackMixedCashUSD] = useState<string>('');
+  const [snackMixedElecProvider, setSnackMixedElecProvider] = useState<
+    'ILLICO_CASH' | 'MPESA' | 'ORANGE_MONEY' | 'AIRTEL_MONEY'
+  >('ILLICO_CASH');
+  const [snackMixedElecCDF, setSnackMixedElecCDF] = useState<string>('');
+  const [snackMixedElecRef, setSnackMixedElecRef] = useState<string>('');
+  const [snackPaymentError, setSnackPaymentError] = useState<string | null>(null);
 
   // Modal clôture de caisse
   const [showCloseModal, setShowCloseModal] = useState(false);
@@ -83,6 +96,7 @@ export const CashShiftView: React.FC<CashShiftViewProps> = ({
 
   // Gestion du panier
   const updateCart = (itemId: string, delta: number) => {
+    setSnackPaymentError(null);
     setCart((prev) => {
       const current = prev[itemId] || 0;
       const next = Math.max(0, current + delta);
@@ -95,21 +109,81 @@ export const CashShiftView: React.FC<CashShiftViewProps> = ({
     });
   };
 
-  const cartItems = Object.entries(cart).map(([id, qty]) => {
-    const item = snackItems.find(s => s.id === id)!;
-    return { item, qty };
-  });
+  const cartItems = Object.entries(cart)
+    .map(([id, qty]) => {
+      const item = snackItems.find((s) => s.id === id);
+      return item ? { item, qty } : null;
+    })
+    .filter((entry): entry is { item: SnackItem; qty: number } => Boolean(entry));
 
   const cartTotalCDF = cartItems.reduce((sum, { item, qty }) => sum + item.priceCDF * qty, 0);
   const cartTotalUSD = cartItems.reduce((sum, { item, qty }) => sum + item.priceUSD * qty, 0);
+
+  const exchangeRate = settings.exchangeRate || 2800;
+  const snackCashCDFVal = Math.max(0, Number(snackMixedCashCDF) || 0);
+  const snackCashUSDVal = Math.max(0, Number(snackMixedCashUSD) || 0);
+  const snackElecCDFVal = Math.max(0, Number(snackMixedElecCDF) || 0);
+  const snackMixedTotalPaidCDF = Math.round(
+    snackCashCDFVal + snackCashUSDVal * exchangeRate + snackElecCDFVal
+  );
+  const snackMixedRemainingCDF = Math.max(0, cartTotalCDF - snackMixedTotalPaidCDF);
 
   const [saleBanner, setSaleBanner] = useState<string | null>(null);
 
   const handleCheckoutCart = () => {
     if (cartItems.length === 0) return;
+    setSnackPaymentError(null);
+
+    const isElecMethod = ['ILLICO_CASH', 'MPESA', 'ORANGE_MONEY', 'AIRTEL_MONEY'].includes(
+      snackPaymentMethod
+    );
+
+    if (isElecMethod && settings.paymentMethodsConfig?.[snackPaymentMethod]?.requireReference && !snackPaymentRef.trim()) {
+      setSnackPaymentError('Veuillez saisir la référence de transaction électronique.');
+      return;
+    }
+
+    let mixedBreakdown: MixedPaymentBreakdown | undefined;
+    let finalRef: string | undefined = isElecMethod && snackPaymentRef.trim() ? snackPaymentRef.trim().toUpperCase() : undefined;
+
+    if (snackPaymentMethod === 'MIXED') {
+      if (Math.abs(snackMixedTotalPaidCDF - cartTotalCDF) > 100) {
+        setSnackPaymentError(
+          `Répartition mixte incomplète : ${snackMixedTotalPaidCDF.toLocaleString()} FC sur ${cartTotalCDF.toLocaleString()} FC requis.`
+        );
+        return;
+      }
+      if (snackElecCDFVal > 0 && !snackMixedElecRef.trim()) {
+        setSnackPaymentError('Référence électronique requise pour la part Mobile Money / Illico Cash.');
+        return;
+      }
+
+      const isIllico = snackMixedElecProvider === 'ILLICO_CASH';
+      mixedBreakdown = {
+        cashCDF: snackCashCDFVal,
+        cashUSD: snackCashUSDVal,
+        illicoCashCDF: isIllico ? snackElecCDFVal : 0,
+        illicoCashUSD: isIllico ? Number((snackElecCDFVal / exchangeRate).toFixed(2)) : 0,
+        illicoCashRef: isIllico && snackMixedElecRef.trim() ? snackMixedElecRef.trim().toUpperCase() : undefined,
+        momoCDF: !isIllico ? snackElecCDFVal : 0,
+        momoUSD: !isIllico ? Number((snackElecCDFVal / exchangeRate).toFixed(2)) : 0,
+        momoProvider: !isIllico ? snackMixedElecProvider : undefined,
+        momoRef: !isIllico && snackMixedElecRef.trim() ? snackMixedElecRef.trim().toUpperCase() : undefined,
+      };
+      finalRef = snackMixedElecRef.trim() ? snackMixedElecRef.trim().toUpperCase() : undefined;
+    }
+
     if (onRecordSnackCartSale) {
-      const createdSale = onRecordSnackCartSale(cartItems, snackPaymentMethod);
+      const createdSale = onRecordSnackCartSale(cartItems, snackPaymentMethod, {
+        paymentReference: finalRef,
+        mixedBreakdown,
+      });
       setCart({});
+      setSnackPaymentRef('');
+      setSnackMixedCashCDF('');
+      setSnackMixedCashUSD('');
+      setSnackMixedElecCDF('');
+      setSnackMixedElecRef('');
       setSaleBanner(`Vente ${createdSale.receiptNumber || ''} enregistrée — Reçu prêt à imprimer.`);
       setTimeout(() => setSaleBanner(null), 4000);
       onPrintSnackSale?.(createdSale);
@@ -292,15 +366,29 @@ export const CashShiftView: React.FC<CashShiftViewProps> = ({
                       { id: 'ILLICO_CASH', label: 'Illico Cash' },
                       { id: 'MPESA', label: 'M-Pesa' },
                       { id: 'ORANGE_MONEY', label: 'Orange Money' },
+                      { id: 'AIRTEL_MONEY', label: 'Airtel Money' },
+                      { id: 'MIXED', label: 'Paiement Mixte' },
                     ].map((m) => (
                       <button
                         key={m.id}
                         type="button"
-                        onClick={() => setSnackPaymentMethod(m.id as PaymentMethod)}
-                        className={`py-1.5 px-2 text-[11px] font-semibold rounded border ${
+                        onClick={() => {
+                          setSnackPaymentMethod(m.id as PaymentMethod);
+                          setSnackPaymentError(null);
+                          if (m.id === 'MIXED' && !snackMixedCashCDF && !snackMixedElecCDF) {
+                            const half = Math.round(cartTotalCDF / 2 / 100) * 100;
+                            setSnackMixedCashCDF(String(half));
+                            setSnackMixedElecCDF(String(Math.max(0, cartTotalCDF - half)));
+                          }
+                        }}
+                        className={`py-1.5 px-2 text-[11px] font-semibold rounded border cursor-pointer ${
+                          m.id === 'MIXED' ? 'col-span-2' : ''
+                        } ${
                           snackPaymentMethod === m.id
-                            ? 'bg-blue-600 border-blue-400 text-white'
-                            : 'bg-slate-800 border-slate-700 text-slate-400'
+                            ? m.id === 'MIXED'
+                              ? 'bg-purple-600 border-purple-400 text-white'
+                              : 'bg-blue-600 border-blue-400 text-white'
+                            : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-white'
                         }`}
                       >
                         {m.label}
@@ -309,9 +397,121 @@ export const CashShiftView: React.FC<CashShiftViewProps> = ({
                   </div>
                 </div>
 
+                {['ILLICO_CASH', 'MPESA', 'ORANGE_MONEY', 'AIRTEL_MONEY'].includes(snackPaymentMethod) && (
+                  <div className="p-2.5 bg-slate-950/70 border border-slate-800 rounded-xl space-y-1">
+                    <label className="text-[10px] text-slate-400 block">
+                      Référence Transaction ({snackPaymentMethod}) :
+                    </label>
+                    <input
+                      type="text"
+                      value={snackPaymentRef}
+                      onChange={(e) => setSnackPaymentRef(e.target.value.toUpperCase())}
+                      placeholder="Ex: IL-992837 ou MP-882716"
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs font-mono text-white"
+                    />
+                  </div>
+                )}
+
+                {snackPaymentMethod === 'MIXED' && (
+                  <div className="p-3 bg-purple-950/20 border border-purple-500/40 rounded-xl space-y-2 text-[11px]">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-purple-300">Répartition Paiement Mixte</span>
+                      <span
+                        className={`font-mono font-bold ${
+                          Math.abs(snackMixedTotalPaidCDF - cartTotalCDF) <= 100
+                            ? 'text-emerald-400'
+                            : 'text-amber-300'
+                        }`}
+                      >
+                        Reste: {snackMixedRemainingCDF.toLocaleString()} FC
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-[10px] text-slate-400 block">Espèces FC</label>
+                        <input
+                          type="number"
+                          min="0"
+                          value={snackMixedCashCDF}
+                          onChange={(e) => setSnackMixedCashCDF(e.target.value)}
+                          placeholder="0"
+                          className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-slate-400 block">Espèces USD ($)</label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.5"
+                          value={snackMixedCashUSD}
+                          onChange={(e) => setSnackMixedCashUSD(e.target.value)}
+                          placeholder="0"
+                          className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white font-mono"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-[10px] text-slate-400 block">Canal électronique</label>
+                        <select
+                          value={snackMixedElecProvider}
+                          onChange={(e) => setSnackMixedElecProvider(e.target.value as any)}
+                          className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white text-[11px]"
+                        >
+                          <option value="ILLICO_CASH">Illico Cash</option>
+                          <option value="MPESA">M-Pesa</option>
+                          <option value="ORANGE_MONEY">Orange Money</option>
+                          <option value="AIRTEL_MONEY">Airtel Money</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-slate-400 block">Montant Élec (FC)</label>
+                        <input
+                          type="number"
+                          min="0"
+                          value={snackMixedElecCDF}
+                          onChange={(e) => setSnackMixedElecCDF(e.target.value)}
+                          placeholder="0"
+                          className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white font-mono"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={snackMixedElecRef}
+                        onChange={(e) => setSnackMixedElecRef(e.target.value.toUpperCase())}
+                        placeholder="Réf. Illico / Mobile Money"
+                        className="flex-1 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white font-mono"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const rem = Math.max(0, cartTotalCDF - Math.round(snackCashCDFVal + snackCashUSDVal * exchangeRate));
+                          setSnackMixedElecCDF(String(rem));
+                        }}
+                        className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-purple-300 rounded border border-purple-500/30 font-semibold whitespace-nowrap cursor-pointer"
+                      >
+                        Solde auto
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {snackPaymentError && (
+                  <div className="p-2 rounded-lg bg-rose-500/20 border border-rose-500/40 text-rose-300 text-[11px] flex items-center gap-1.5">
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                    <span>{snackPaymentError}</span>
+                  </div>
+                )}
+
                 <button
                   onClick={handleCheckoutCart}
-                  className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-md transition"
+                  className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-md transition cursor-pointer"
                 >
                   Encaisser la vente
                 </button>

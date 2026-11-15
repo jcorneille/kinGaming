@@ -5,6 +5,7 @@ import {
   Printer,
   RotateCcw,
   Tv,
+  ArrowRightLeft,
 } from 'lucide-react';
 import { Ticket, TicketStatus, Station } from '../types';
 import { Pagination } from './Pagination';
@@ -14,6 +15,7 @@ interface TicketsViewProps {
   stations?: Station[];
   onPrintTicket: (ticket: Ticket) => void;
   onRefundTicket: (ticketId: string) => void;
+  onTransferTicket?: (ticket: Ticket) => void;
 }
 
 const PAGE_SIZE = 10;
@@ -23,6 +25,7 @@ export const TicketsView: React.FC<TicketsViewProps> = ({
   stations = [],
   onPrintTicket,
   onRefundTicket,
+  onTransferTicket,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
@@ -170,6 +173,11 @@ export const TicketsView: React.FC<TicketsViewProps> = ({
                       <span className={`ml-1.5 text-[10px] px-1 py-0.2 rounded font-bold ${t.stationType === 'PS5' ? 'bg-cyan-500/20 text-cyan-300' : 'bg-slate-800 text-slate-400'}`}>
                         {t.stationType}
                       </span>
+                      {t.transferredFromStationId && (
+                        <div className="text-[10px] text-amber-300 font-mono">
+                          &larr; Poste {t.transferredFromStationId}
+                        </div>
+                      )}
                     </td>
                     <td className="py-3 px-4 font-sans whitespace-nowrap">
                       <div className="font-semibold text-slate-200">{t.clientName}</div>
@@ -184,6 +192,9 @@ export const TicketsView: React.FC<TicketsViewProps> = ({
                     <td className="py-3 px-4 text-right whitespace-nowrap">
                       <div className="font-bold text-emerald-400">{t.amountCDF.toLocaleString()} FC</div>
                       <div className="text-[10px] text-slate-400">${t.amountUSD.toFixed(2)}</div>
+                      {t.appliedPromoCode && (
+                        <div className="text-[10px] text-purple-300 font-bold">{t.appliedPromoCode}</div>
+                      )}
                     </td>
                     <td className="py-3 px-4 text-[11px] text-slate-300 whitespace-nowrap font-sans">
                       <span className="font-medium">{t.paymentMethod}</span>
@@ -203,7 +214,16 @@ export const TicketsView: React.FC<TicketsViewProps> = ({
                         >
                           <Printer className="w-3.5 h-3.5" />
                         </button>
-                        {t.status === 'active' && (
+                        {(t.status === 'active' || t.status === 'extended') && onTransferTicket && (
+                          <button
+                            onClick={() => onTransferTicket(t)}
+                            title="Transférer ce client vers un autre poste"
+                            className="p-1.5 text-cyan-400 hover:text-white hover:bg-cyan-600 rounded-lg transition cursor-pointer"
+                          >
+                            <ArrowRightLeft className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                        {(t.status === 'active' || t.status === 'extended') && (
                           <button
                             onClick={() => onRefundTicket(t.id)}
                             title="Annuler et rembourser le ticket"

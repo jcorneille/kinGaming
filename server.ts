@@ -383,6 +383,177 @@ app.post('/api/auth/profile', (req, res) => {
   });
 });
 
+// ============================================================================
+// Stockage public des tickets pour vérification QR cross-appareils
+// ============================================================================
+const PUBLIC_TICKETS_FILE = path.join(DATA_DIR, 'public-tickets.json');
+const WHATSAPP_EVENTS_FILE = path.join(DATA_DIR, 'whatsapp-events.json');
+
+interface StoredPublicTicket {
+  id: string;
+  ticketNumber: string;
+  signedToken: string;
+  stationId: number;
+  stationName: string;
+  stationType: 'PS4' | 'PS5';
+  clientName: string;
+  clientPhone?: string;
+  clientId?: string;
+  durationMinutes: number;
+  startTime: number;
+  endTime: number;
+  actualEndTime?: number;
+  amountCDF: number;
+  amountUSD: number;
+  appliedDiscountPercent?: number;
+  appliedTimeSlotLabel?: string;
+  appliedPromoCode?: string;
+  paymentMethod: string;
+  mixedBreakdown?: Record<string, any>;
+  status: string;
+  createdAt: number;
+  extendedCount: number;
+  transferredFromStationId?: number;
+  updatedAt: number;
+}
+
+interface StoredWhatsAppWebhookEvent {
+  id: string;
+  receivedAt: number;
+  kind: 'STATUS_UPDATE' | 'INBOUND_MESSAGE';
+  metaMessageId?: string;
+  recipientPhone?: string;
+  status?: 'SENT' | 'DELIVERED' | 'READ' | 'FAILED';
+  errorMessage?: string;
+  fromPhone?: string;
+  replyText?: string;
+}
+
+function loadPublicTickets(): Record<string, StoredPublicTicket> {
+  try {
+    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+    if (fs.existsSync(PUBLIC_TICKETS_FILE)) {
+      return JSON.parse(fs.readFileSync(PUBLIC_TICKETS_FILE, 'utf-8')) || {};
+    }
+  } catch (err) {
+    console.error('[PublicTickets] Erreur lecture:', err);
+  }
+  return {};
+}
+
+function savePublicTickets(map: Record<string, StoredPublicTicket>): void {
+  try {
+    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(PUBLIC_TICKETS_FILE, JSON.stringify(map, null, 2), 'utf-8');
+  } catch (err) {
+    console.error('[PublicTickets] Erreur écriture:', err);
+  }
+}
+
+function loadWhatsAppEvents(): StoredWhatsAppWebhookEvent[] {
+  try {
+    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+    if (fs.existsSync(WHATSAPP_EVENTS_FILE)) {
+      const parsed = JSON.parse(fs.readFileSync(WHATSAPP_EVENTS_FILE, 'utf-8'));
+      return Array.isArray(parsed) ? parsed : [];
+    }
+  } catch (err) {
+    console.error('[WhatsAppEvents] Erreur lecture:', err);
+  }
+  return [];
+}
+
+function saveWhatsAppEvents(events: StoredWhatsAppWebhookEvent[]): void {
+  try {
+    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(WHATSAPP_EVENTS_FILE, JSON.stringify(events.slice(0, 300), null, 2), 'utf-8');
+  } catch (err) {
+    console.error('[WhatsAppEvents] Erreur écriture:', err);
+  }
+}
+
+let publicTicketsStore: Record<string, StoredPublicTicket> = loadPublicTickets();
+let whatsappEventsStore: StoredWhatsAppWebhookEvent[] = loadWhatsAppEvents();
+
+// Synchroniser un ou plusieurs tickets vers le registre public QR
+app.post('/api/tickets/sync', (req, res) => {
+  const { ticket, tickets } = req.body || {};
+  const list: any[] = [];
+  if (ticket && typeof ticket === 'object') list.push(ticket);
+  if (Array.isArray(tickets)) list.push(...tickets);
+
+  if (list.length === 0) {
+    return res.status(400).json({ success: false, error: 'Aucun ticket fourni' });
+  }
+
+  const now = Date.now();
+  let syncedCount = 0;
+  for (const t of list) {
+    if (!t || !t.signedToken) continue;
+    publicTicketsStore[String(t.signedToken)] = {
+      id: String(t.id || ''),
+      ticketNumber: String(t.ticketNumber || ''),
+      signedToken: String(t.signedToken),
+      stationId: Number(t.stationId || 1),
+      stationName: String(t.stationName || `Poste ${t.stationId || 1}`),
+      stationType: t.stationType === 'PS5' ? 'PS5' : 'PS4',
+      clientName: String(t.clientName || 'Client'),
+      clientPhone: t.clientPhone ? String(t.clientPhone) : undefined,
+      clientId: t.clientId ? String(t.clientId) : undefined,
+      durationMinutes: Number(t.durationMinutes || 0),
+      startTime: Number(t.startTime || now),
+      endTime: Number(t.endTime || now),
+      actualEndTime: t.actualEndTime ? Number(t.actualEndTime) : undefined,
+      amountCDF: Number(t.amountCDF || 0),
+      amountUSD: Number(t.amountUSD || 0),
+      appliedDiscountPercent: t.appliedDiscountPercent ? Number(t.appliedDiscountPercent) : undefined,
+      appliedTimeSlotLabel: t.appliedTimeSlotLabel ? String(t.appliedTimeSlotLabel) : undefined,
+      appliedPromoCode: t.appliedPromoCode ? String(t.appliedPromoCode) : undefined,
+      paymentMethod: String(t.paymentMethod || 'CASH_CDF'),
+      mixedBreakdown: t.mixedBreakdown || undefined,
+      status: String(t.status || 'active'),
+      createdAt: Number(t.createdAt || now),
+      extendedCount: Number(t.extendedCount || 0),
+      transferredFromStationId: t.transferredFromStationId ? Number(t.transferredFromStationId) : undefined,
+      updatedAt: now,
+    };
+    syncedCount++;
+  }
+
+  savePublicTickets(publicTicketsStore);
+  return res.status(200).json({ success: true, count: syncedCount });
+});
+
+// Vérification publique d'un ticket via son jeton QR (sans authentification)
+app.get('/api/tickets/public/:token', (req, res) => {
+  const token = decodeURIComponent(String(req.params.token || '').trim());
+  if (!token) {
+    return res.status(400).json({ found: false, error: 'Jeton manquant' });
+  }
+
+  const found =
+    publicTicketsStore[token] ||
+    Object.values(publicTicketsStore).find(
+      (t) => t.signedToken === token || t.ticketNumber === token || t.id === token
+    );
+
+  if (!found) {
+    return res.status(404).json({ found: false, error: 'Ticket introuvable' });
+  }
+
+  const now = Date.now();
+  const isActive = found.status === 'active' || found.status === 'extended';
+  const remainingSeconds = isActive ? Math.max(0, Math.floor((found.endTime - now) / 1000)) : 0;
+
+  return res.status(200).json({
+    found: true,
+    ticket: {
+      ...found,
+      remainingSeconds,
+    },
+  });
+});
+
 // Variables d'environnement Meta WhatsApp Cloud API
 const WHATSAPP_ACCESS_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN || '';
 const WHATSAPP_PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID || '';
@@ -409,14 +580,96 @@ app.get('/api/whatsapp/webhook', (req, res) => {
 
 /**
  * 2. Inbound Webhook Events (POST /api/whatsapp/webhook)
- * Réception des statuts de livraison (sent, delivered, read, failed) et réponses clients ("OUI", "ANNULER", "STOP")
+ * Réception réelle des statuts de livraison (sent, delivered, read, failed) et réponses clients ("OUI", "ANNULER", "STOP")
  */
 app.post('/api/whatsapp/webhook', (req, res) => {
-  const body = req.body;
-  console.log('[Meta Webhook Event Received]:', JSON.stringify(body, null, 2));
+  const body = req.body || {};
+  const now = Date.now();
+  const newEvents: StoredWhatsAppWebhookEvent[] = [];
 
-  // Traitement basique pour acquitter immédiatement Meta (requis < 20s)
-  res.status(200).json({ status: 'EVENT_RECEIVED' });
+  const mapMetaStatus = (raw?: string): 'SENT' | 'DELIVERED' | 'READ' | 'FAILED' | undefined => {
+    const s = String(raw || '').toLowerCase();
+    if (s === 'sent') return 'SENT';
+    if (s === 'delivered') return 'DELIVERED';
+    if (s === 'read') return 'READ';
+    if (s === 'failed') return 'FAILED';
+    return undefined;
+  };
+
+  if (Array.isArray(body.entry)) {
+    for (const entry of body.entry) {
+      const changes = Array.isArray(entry?.changes) ? entry.changes : [];
+      for (const ch of changes) {
+        const val = ch?.value || {};
+        if (Array.isArray(val.statuses)) {
+          for (const st of val.statuses) {
+            const mapped = mapMetaStatus(st?.status);
+            if (!mapped) continue;
+            const errMsg = Array.isArray(st?.errors) && st.errors[0]?.message ? String(st.errors[0].message) : undefined;
+            newEvents.push({
+              id: `wa-ev-${now}-${Math.random().toString(36).slice(2, 7)}`,
+              receivedAt: st?.timestamp ? Number(st.timestamp) * 1000 : now,
+              kind: 'STATUS_UPDATE',
+              metaMessageId: st?.id ? String(st.id) : undefined,
+              recipientPhone: st?.recipient_id ? `+${String(st.recipient_id).replace(/^\+/, '')}` : undefined,
+              status: mapped,
+              errorMessage: errMsg,
+            });
+          }
+        }
+        if (Array.isArray(val.messages)) {
+          for (const msg of val.messages) {
+            const textBody = msg?.text?.body || msg?.button?.text || '';
+            if (!msg?.from || !textBody) continue;
+            newEvents.push({
+              id: `wa-ev-${now}-${Math.random().toString(36).slice(2, 7)}`,
+              receivedAt: msg?.timestamp ? Number(msg.timestamp) * 1000 : now,
+              kind: 'INBOUND_MESSAGE',
+              metaMessageId: msg?.context?.id ? String(msg.context.id) : undefined,
+              fromPhone: `+${String(msg.from).replace(/^\+/, '')}`,
+              replyText: String(textBody).trim(),
+            });
+          }
+        }
+      }
+    }
+  } else if (body.status || body.replyText) {
+    // Support format direct interne
+    const mapped = mapMetaStatus(body.status);
+    if (mapped) {
+      newEvents.push({
+        id: `wa-ev-${now}-${Math.random().toString(36).slice(2, 7)}`,
+        receivedAt: now,
+        kind: 'STATUS_UPDATE',
+        metaMessageId: body.metaMessageId ? String(body.metaMessageId) : undefined,
+        recipientPhone: body.phone ? String(body.phone) : undefined,
+        status: mapped,
+        errorMessage: body.errorMessage ? String(body.errorMessage) : undefined,
+      });
+    }
+    if (body.replyText && body.phone) {
+      newEvents.push({
+        id: `wa-ev-${now}-${Math.random().toString(36).slice(2, 7)}`,
+        receivedAt: now,
+        kind: 'INBOUND_MESSAGE',
+        fromPhone: String(body.phone),
+        replyText: String(body.replyText).trim(),
+      });
+    }
+  }
+
+  if (newEvents.length > 0) {
+    whatsappEventsStore = [...newEvents, ...whatsappEventsStore].slice(0, 300);
+    saveWhatsAppEvents(whatsappEventsStore);
+  }
+
+  res.status(200).json({ status: 'EVENT_RECEIVED', processedCount: newEvents.length, events: newEvents });
+});
+
+app.get('/api/whatsapp/webhook-events', (req, res) => {
+  const since = Number(req.query.since || 0);
+  const events = since > 0 ? whatsappEventsStore.filter((e) => e.receivedAt >= since) : whatsappEventsStore;
+  res.status(200).json({ events });
 });
 
 /**
@@ -424,49 +677,89 @@ app.post('/api/whatsapp/webhook', (req, res) => {
  */
 app.post('/api/whatsapp/send', async (req, res) => {
   try {
-    const { to, templateName, variables, configOverride } = req.body;
+    const { to, templateName, variables, languageCode, messageType, customText, configOverride } = req.body;
 
-    const phoneNumberId = configOverride?.phoneNumberId || WHATSAPP_PHONE_NUMBER_ID;
-    const accessToken = configOverride?.accessToken || WHATSAPP_ACCESS_TOKEN;
-    const apiVersion = configOverride?.apiVersion || WHATSAPP_API_VERSION;
-    const isTestMode = configOverride?.isTestMode ?? false;
+    const phoneNumberId = String(configOverride?.phoneNumberId || WHATSAPP_PHONE_NUMBER_ID || '').trim();
+    const accessToken = String(configOverride?.accessToken || WHATSAPP_ACCESS_TOKEN || '').trim();
+    const apiVersion = String(configOverride?.apiVersion || WHATSAPP_API_VERSION || 'v21.0').trim();
+    const isTestMode = Boolean(configOverride?.isTestMode);
 
-    // Si pas de jeton ou token factice "EAAG..." ou mode test sans config réelle, simulation réussie
-    if (!accessToken || accessToken.startsWith('EAA...') || accessToken.startsWith('EAAG...') || isTestMode) {
-      console.log(`[WhatsApp Simulator] Message simulé avec succès vers ${to} (template: ${templateName})`);
+    const isPlaceholderToken =
+      !accessToken ||
+      accessToken === 'EAAG...' ||
+      accessToken === 'EAA...' ||
+      accessToken.length < 25 ||
+      accessToken.includes('xxxx');
+    const isMissingPhoneId = !phoneNumberId || phoneNumberId === '109876543210987' && isPlaceholderToken;
+
+    // Simulation contrôlée uniquement si aucun vrai jeton / Phone ID Meta n'est fourni
+    if (isPlaceholderToken || isMissingPhoneId || !phoneNumberId) {
+      console.log(
+        `[WhatsApp Simulator] Jeton Meta non configuré — message simulé vers ${to} (${messageType === 'text' ? 'texte libre' : templateName})`
+      );
       return res.status(200).json({
         success: true,
         messageId: `wamid.sim_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
         mode: 'SIMULATION',
+        reason: 'Aucun jeton Meta Graph API valide configuré (simulation locale).',
       });
     }
 
-    // Format des paramètres de template pour Meta Cloud API
-    const parameters = Object.keys(variables || {})
-      .sort((a, b) => Number(a) - Number(b))
-      .map((key) => ({
-        type: 'text',
-        text: String(variables[key]),
-      }));
+    const cleanRecipient = String(to || '').replace(/[^0-9]/g, '');
+    if (!cleanRecipient || cleanRecipient.length < 8) {
+      return res.status(400).json({
+        success: false,
+        error: `Numéro destinataire invalide: "${to}". Utilisez le format E.164 (ex: +243895457097).`,
+      });
+    }
 
     const url = `https://graph.facebook.com/${apiVersion}/${phoneNumberId}/messages`;
-    const payload = {
-      messaging_product: 'whatsapp',
-      to: to.replace('+', ''), // Meta requiert le numéro sans le signe +
-      type: 'template',
-      template: {
+    let payload: Record<string, any>;
+
+    if (messageType === 'text' && customText) {
+      payload = {
+        messaging_product: 'whatsapp',
+        recipient_type: 'individual',
+        to: cleanRecipient,
+        type: 'text',
+        text: {
+          preview_url: false,
+          body: String(customText),
+        },
+      };
+    } else {
+      const parameters = Object.keys(variables || {})
+        .sort((a, b) => Number(a) - Number(b))
+        .filter((key) => variables[key] !== undefined && String(variables[key]).trim() !== '')
+        .map((key) => ({
+          type: 'text',
+          text: String(variables[key]),
+        }));
+
+      const resolvedLang = languageCode || (templateName === 'hello_world' ? 'en_US' : 'fr');
+      const templateObj: Record<string, any> = {
         name: templateName,
         language: {
-          code: 'fr',
+          code: resolvedLang,
         },
-        components: [
+      };
+
+      if (parameters.length > 0) {
+        templateObj.components = [
           {
             type: 'body',
             parameters,
           },
-        ],
-      },
-    };
+        ];
+      }
+
+      payload = {
+        messaging_product: 'whatsapp',
+        to: cleanRecipient,
+        type: 'template',
+        template: templateObj,
+      };
+    }
 
     const metaRes = await fetch(url, {
       method: 'POST',
@@ -477,18 +770,21 @@ app.post('/api/whatsapp/send', async (req, res) => {
       body: JSON.stringify(payload),
     });
 
-    const metaData = await metaRes.json();
+    const metaData = await metaRes.json().catch(() => ({}));
 
     if (!metaRes.ok) {
       console.error('[Meta Graph API Error]:', metaData);
+      const userMsg = metaData?.error?.error_user_msg || metaData?.error?.message || `Meta API HTTP ${metaRes.status}`;
       return res.status(metaRes.status).json({
         success: false,
-        error: metaData.error?.message || 'Meta API returned an error',
+        error: userMsg,
+        errorCode: metaData?.error?.code,
         details: metaData,
       });
     }
 
     const messageId = metaData.messages?.[0]?.id || `wamid.${Date.now()}`;
+    console.log(`[WhatsApp Meta LIVE${isTestMode ? ' Sandbox' : ''}] Message envoyé vers +${cleanRecipient} (ID: ${messageId})`);
     return res.status(200).json({
       success: true,
       messageId,

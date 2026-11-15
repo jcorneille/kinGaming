@@ -27,23 +27,36 @@ import {
   Sparkles,
   Sliders,
   Image as ImageIcon,
+  Volume2,
 } from 'lucide-react';
 import {
   SystemSettings,
   StaffUser,
   PricingPlan,
   PromotionRule,
+  TimeSlotPricingRule,
+  LoyaltyTier,
   PaymentMethod,
   SettingsHistoryEntry,
   ScheduledSettingChange,
   Station,
+  StationType,
   DomotiqueDevice,
+  WhatsAppConfig,
 } from '../types';
 import {
   DEFAULT_SETTINGS_BY_SECTION,
   DEFAULT_PAGE_BACKGROUND_URL,
   DEFAULT_PAGE_BACKGROUND_OPACITY,
 } from '../services/storage';
+import {
+  CONSOLE_CATALOG,
+  CONSOLE_BRANDS,
+  getConsoleLabel,
+  isHighTierConsole,
+} from '../services/consoleCatalog';
+import { soundService } from '../services/soundService';
+import { hasRealMetaCredentials } from '../services/whatsappService';
 import { compressBackgroundImage } from '../utils/imageResize';
 import { Pagination } from './Pagination';
 
@@ -69,7 +82,7 @@ interface AdminSettingsViewProps {
   stations?: Station[];
   onAddStation?: (stationConfig: {
     name: string;
-    type: 'PS4' | 'PS5';
+    type: StationType;
     hardwareType: DomotiqueDevice['hardwareType'];
     ipAddress: string;
   }) => void;
@@ -85,6 +98,8 @@ interface AdminSettingsViewProps {
   onCancelScheduledChange: (id: string) => void;
   currentStaffUser: StaffUser | null;
   onOpenStaffManagement: () => void;
+  whatsappConfig?: WhatsAppConfig;
+  onOpenWhatsAppConfig?: () => void;
   onExportConfig: () => void;
   onImportConfig: (importedSettings: SystemSettings) => void;
 }
@@ -102,10 +117,13 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
   onCancelScheduledChange,
   currentStaffUser,
   onOpenStaffManagement,
+  whatsappConfig,
+  onOpenWhatsAppConfig,
   onExportConfig,
   onImportConfig,
 }) => {
   const [activeSection, setActiveSection] = useState<SettingsSection>('overview');
+  const [voiceTestResult, setVoiceTestResult] = useState<string | null>(null);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [showScheduledModal, setShowScheduledModal] = useState(false);
   const [historyPage, setHistoryPage] = useState(1);
@@ -113,7 +131,7 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
   // Ajout de nouvelle station
   const nextStationNum = (stations.length > 0 ? Math.max(...stations.map((s) => s.id)) : 10) + 1;
   const [newStationName, setNewStationName] = useState('');
-  const [newStationType, setNewStationType] = useState<'PS4' | 'PS5'>('PS5');
+  const [newStationType, setNewStationType] = useState<StationType>('PS5');
   const [newStationHardware, setNewStationHardware] = useState<DomotiqueDevice['hardwareType']>('SHELLY_1PM');
   const [newStationIp, setNewStationIp] = useState('');
 
@@ -677,13 +695,25 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
       return;
     }
 
-    // Save plans and sync CDF equivalents whenever overview, currency, or pricing changes
+    // Save plans and keep CDF primary when editing pricing or when primaryCurrency is CDF
     if (activeSection === 'overview' || activeSection === 'currency' || activeSection === 'pricing') {
       const rounding = draftSettings.cdfRoundingRule || 100;
-      const syncedPlans = draftPricing.map((plan) => ({
-        ...plan,
-        priceCDF: Math.max(100, Math.round((plan.priceUSD * draftSettings.exchangeRate) / rounding) * rounding),
-      }));
+      const rate = draftSettings.exchangeRate || 2800;
+      const decimals = draftSettings.usdDecimals ?? 2;
+      const syncedPlans = draftPricing.map((plan) => {
+        if (activeSection === 'pricing' || draftSettings.primaryCurrency !== 'USD') {
+          const cdf = Math.max(100, Math.round(plan.priceCDF || plan.priceUSD * rate));
+          return {
+            ...plan,
+            priceCDF: cdf,
+            priceUSD: Number((cdf / rate).toFixed(decimals)),
+          };
+        }
+        return {
+          ...plan,
+          priceCDF: Math.max(100, Math.round((plan.priceUSD * rate) / rounding) * rounding),
+        };
+      });
       setDraftPricing(syncedPlans);
       onUpdatePricingPlans(syncedPlans);
     }
@@ -879,7 +909,15 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-400">WhatsApp Meta :</span>
-                <span className="font-mono text-emerald-400">Actif v21.0</span>
+                <span
+                  className={`font-mono ${
+                    whatsappConfig && hasRealMetaCredentials(whatsappConfig)
+                      ? 'text-emerald-400'
+                      : 'text-amber-400'
+                  }`}
+                >
+                  {whatsappConfig && hasRealMetaCredentials(whatsappConfig) ? 'Connecté' : 'Simulation / wa.me'}
+                </span>
               </div>
             </div>
           </div>
@@ -1328,11 +1366,18 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
                           <label className="text-[11px] text-slate-400 block mb-1">Type de console</label>
                           <select
                             value={newStationType}
-                            onChange={(e) => setNewStationType(e.target.value as 'PS4' | 'PS5')}
+                            onChange={(e) => setNewStationType(e.target.value as StationType)}
                             className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-bold"
                           >
-                            <option value="PS4">PlayStation 4 (PS4)</option>
-                            <option value="PS5">PlayStation 5 (PS5)</option>
+                            {CONSOLE_BRANDS.map((brand) => (
+                              <optgroup key={brand} label={brand}>
+                                {CONSOLE_CATALOG.filter((c) => c.brand === brand).map((c) => (
+                                  <option key={c.code} value={c.code}>
+                                    {c.label}
+                                  </option>
+                                ))}
+                              </optgroup>
+                            ))}
                           </select>
                         </div>
                         <div>
@@ -1721,27 +1766,34 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
 
                   {/* Pricing grid table */}
                   <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <h3 className="text-xs font-bold text-slate-200 uppercase tracking-wider font-mono">
-                        Grille des Paliers & Forfaits (PS4 & PS5)
-                      </h3>
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div>
+                        <h3 className="text-xs font-bold text-slate-200 uppercase tracking-wider font-mono">
+                          Grille des Paliers &amp; Forfaits (Prix en Francs + Équivalence $)
+                        </h3>
+                        <p className="text-[11px] text-slate-400">
+                          Saisissez le prix en Francs Congolais (FC) : l&apos;équivalent en Dollars ($ USD) est calculé automatiquement selon le taux (1$ = {draftSettings.exchangeRate.toLocaleString()} FC).
+                        </p>
+                      </div>
                       <button
                         type="button"
                         onClick={() => {
+                          const rate = draftSettings.exchangeRate || 2800;
+                          const defaultCDF = 4000;
                           const newPlan: PricingPlan = {
                             id: `plan-${Date.now()}`,
                             stationType: 'PS4',
                             durationMinutes: 45,
                             label: '45 Minutes',
-                            priceCDF: 4000,
-                            priceUSD: 1.43,
+                            priceCDF: defaultCDF,
+                            priceUSD: Number((defaultCDF / rate).toFixed(draftSettings.usdDecimals ?? 2)),
                             pointsCost: 250,
                             pointsReward: 4,
                             enabled: true,
                           };
                           setDraftPricing([...draftPricing, newPlan]);
                         }}
-                        className="px-2.5 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1 transition cursor-pointer"
+                        className="px-2.5 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1 transition cursor-pointer shrink-0"
                       >
                         <Plus className="w-3.5 h-3.5" />
                         <span>Ajouter un palier</span>
@@ -1752,11 +1804,11 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
                       <table className="w-full text-left text-xs">
                         <thead className="bg-slate-800 text-slate-300 font-semibold border-b border-slate-700">
                           <tr>
-                            <th className="p-2.5">Poste</th>
-                            <th className="p-2.5">Durée</th>
+                            <th className="p-2.5">Console / Poste</th>
+                            <th className="p-2.5">Durée (min)</th>
                             <th className="p-2.5">Libellé</th>
-                            <th className="p-2.5">Prix en Dollars ($ USD)</th>
-                            <th className="p-2.5">Équivalent en Francs (CDF / FC)</th>
+                            <th className="p-2.5">Prix en Francs (FC / CDF)</th>
+                            <th className="p-2.5">Équivalence en Dollars ($ USD)</th>
                             <th className="p-2.5">Coût Pts</th>
                             <th className="p-2.5">Gain Pts</th>
                             <th className="p-2.5 text-center">Actif</th>
@@ -1765,21 +1817,54 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
                         </thead>
                         <tbody className="divide-y divide-slate-800 font-mono">
                           {draftPricing.map((plan, idx) => {
-                            const calculatedCDF = Math.round(plan.priceUSD * draftSettings.exchangeRate);
+                            const rate = draftSettings.exchangeRate || 2800;
+                            const decimals = draftSettings.usdDecimals ?? 2;
+                            const calculatedUSD = (plan.priceCDF || 0) / rate;
+                            const highTier = isHighTierConsole(plan.stationType);
                             return (
                               <tr key={plan.id} className="hover:bg-slate-800/40 transition">
                                 <td className="p-2.5">
-                                  <span
-                                    className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                                      plan.stationType === 'PS5'
-                                        ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30'
-                                        : 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
+                                  <select
+                                    value={plan.stationType}
+                                    onChange={(e) => {
+                                      const next = [...draftPricing];
+                                      next[idx].stationType = e.target.value as StationType;
+                                      setDraftPricing(next);
+                                    }}
+                                    className={`bg-slate-900 border rounded px-2 py-1 text-[11px] font-bold outline-none ${
+                                      highTier
+                                        ? 'border-cyan-500/40 text-cyan-300'
+                                        : 'border-blue-500/40 text-blue-300'
                                     }`}
                                   >
-                                    {plan.stationType}
-                                  </span>
+                                    {CONSOLE_BRANDS.map((brand) => (
+                                      <optgroup key={brand} label={brand}>
+                                        {CONSOLE_CATALOG.filter((c) => c.brand === brand).map((c) => (
+                                          <option key={c.code} value={c.code}>
+                                            {c.shortLabel}
+                                          </option>
+                                        ))}
+                                      </optgroup>
+                                    ))}
+                                  </select>
                                 </td>
-                                <td className="p-2.5 font-bold text-slate-200">{plan.durationMinutes} min</td>
+                                <td className="p-2.5 font-bold text-slate-200">
+                                  <div className="relative inline-flex items-center">
+                                    <input
+                                      type="number"
+                                      min="5"
+                                      step="5"
+                                      value={plan.durationMinutes}
+                                      onChange={(e) => {
+                                        const next = [...draftPricing];
+                                        next[idx].durationMinutes = Math.max(5, Number(e.target.value));
+                                        setDraftPricing(next);
+                                      }}
+                                      className="bg-slate-900 border border-slate-700 rounded pl-2 pr-8 py-1 text-slate-200 font-bold text-xs w-20 text-right"
+                                    />
+                                    <span className="absolute right-2 text-slate-400 text-[10px]">min</span>
+                                  </div>
+                                </td>
                                 <td className="p-2.5">
                                   <input
                                     type="text"
@@ -1792,30 +1877,31 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
                                     className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white text-xs w-28"
                                   />
                                 </td>
-                                {/* Saisie manuelle du prix en DOLLARS ($ USD) - Exigence G */}
+                                {/* Saisie directe du prix en FRANCS CONGOLAIS (FC / CDF) */}
                                 <td className="p-2.5">
                                   <div className="relative inline-flex items-center">
                                     <input
                                       type="number"
-                                      step="0.05"
-                                      value={plan.priceUSD}
+                                      step="50"
+                                      min="0"
+                                      value={plan.priceCDF}
                                       onChange={(e) => {
                                         const next = [...draftPricing];
-                                        const valUSD = Number(e.target.value);
-                                        next[idx].priceUSD = valUSD;
-                                        next[idx].priceCDF = Math.round(valUSD * draftSettings.exchangeRate);
+                                        const valCDF = Math.max(0, Number(e.target.value));
+                                        next[idx].priceCDF = valCDF;
+                                        next[idx].priceUSD = Number((valCDF / rate).toFixed(decimals));
                                         setDraftPricing(next);
                                       }}
-                                      className="bg-slate-900 border border-blue-500/60 rounded pl-2 pr-6 py-1 text-cyan-300 font-bold text-xs w-24 text-right focus:ring-1 focus:ring-blue-400 outline-none"
+                                      className="bg-slate-900 border border-emerald-500/60 rounded pl-2 pr-8 py-1 text-emerald-300 font-bold text-xs w-28 text-right focus:ring-1 focus:ring-emerald-400 outline-none"
                                     />
-                                    <span className="absolute right-2 text-slate-400 text-xs">$</span>
+                                    <span className="absolute right-2 text-emerald-400 text-[10px] font-bold">FC</span>
                                   </div>
                                 </td>
-                                {/* Équivalent en Francs Congolais (FC / CDF) calculé dynamiquement */}
+                                {/* Équivalence en Dollars ($ USD) calculée automatiquement */}
                                 <td className="p-2.5">
-                                  <div className="inline-flex items-center gap-1 px-2 py-1 rounded bg-emerald-500/10 border border-emerald-500/30 font-bold text-emerald-400 text-xs">
-                                    <span>{calculatedCDF.toLocaleString()}</span>
-                                    <span className="text-[10px] text-emerald-300 font-mono">FC</span>
+                                  <div className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-cyan-500/10 border border-cyan-500/30 font-bold text-cyan-300 text-xs">
+                                    <span>≈ {calculatedUSD.toFixed(decimals)}</span>
+                                    <span className="text-[10px] text-cyan-400 font-mono">$</span>
                                   </div>
                                 </td>
                                 <td className="p-2.5 text-amber-400">
@@ -1843,24 +1929,215 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
                                     className="rounded border-slate-700 text-blue-600 focus:ring-0 cursor-pointer"
                                   />
                                 </td>
-                              <td className="p-2.5 text-right">
+                                <td className="p-2.5 text-right">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      if (confirm(`Supprimer le palier ${plan.label} (${getConsoleLabel(plan.stationType)}) ?`)) {
+                                        setDraftPricing(draftPricing.filter((p) => p.id !== plan.id));
+                                      }
+                                    }}
+                                    className="text-slate-500 hover:text-rose-400 p-1 cursor-pointer"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  {/* Tarifs par Tranches Horaires (Heures Creuses, Happy Hour, Soirée/Week-end) */}
+                  <div className="p-4 bg-slate-800/40 border border-slate-700 rounded-xl space-y-4">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div>
+                        <h3 className="text-xs font-bold text-cyan-300 uppercase tracking-wider font-mono">
+                          Tarifs Dynamiques par Tranches Horaires
+                        </h3>
+                        <p className="text-[11px] text-slate-400">
+                          Applique automatiquement une remise ou majoration selon l&apos;heure et le jour lors de la création de ticket.
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <label className="flex items-center gap-2 text-xs text-slate-200 font-semibold cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={draftSettings.enableTimeSlotPricing ?? true}
+                            onChange={(e) =>
+                              setDraftSettings({
+                                ...draftSettings,
+                                enableTimeSlotPricing: e.target.checked,
+                              })
+                            }
+                            className="rounded border-slate-700 text-cyan-500 cursor-pointer"
+                          />
+                          <span>Activer tranches horaires</span>
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const newSlot: TimeSlotPricingRule = {
+                              id: `slot-${Date.now()}`,
+                              name: 'Nouvelle Tranche',
+                              startTime: '14:00',
+                              endTime: '17:00',
+                              daysOfWeek: [],
+                              modifierType: 'PERCENT_DISCOUNT',
+                              modifierValue: 15,
+                              applicableStationTypes: ['PS4', 'PS5'],
+                              isActive: true,
+                            };
+                            setDraftSettings({
+                              ...draftSettings,
+                              timeSlotPricingRules: [...(draftSettings.timeSlotPricingRules || []), newSlot],
+                            });
+                          }}
+                          className="px-2.5 py-1 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1 cursor-pointer"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>Ajouter tranche</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2.5">
+                      {(draftSettings.timeSlotPricingRules || []).map((slot, sIdx) => {
+                        const dayLabels = ['Dim', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam'];
+                        const updateSlot = (patch: Partial<TimeSlotPricingRule>) => {
+                          const next = [...(draftSettings.timeSlotPricingRules || [])];
+                          next[sIdx] = { ...next[sIdx], ...patch };
+                          setDraftSettings({ ...draftSettings, timeSlotPricingRules: next });
+                        };
+                        return (
+                          <div
+                            key={slot.id}
+                            className="p-3 bg-slate-900/80 border border-slate-700 rounded-xl space-y-2.5 text-xs"
+                          >
+                            <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-center">
+                              <input
+                                type="text"
+                                value={slot.name}
+                                onChange={(e) => updateSlot({ name: e.target.value })}
+                                placeholder="Nom de la tranche"
+                                className="sm:col-span-3 bg-slate-950 border border-slate-700 rounded px-2.5 py-1.5 text-white font-semibold"
+                              />
+                              <div className="sm:col-span-3 flex items-center gap-1.5">
+                                <input
+                                  type="time"
+                                  value={slot.startTime}
+                                  onChange={(e) => updateSlot({ startTime: e.target.value })}
+                                  className="flex-1 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-white font-mono"
+                                />
+                                <span className="text-slate-400">&rarr;</span>
+                                <input
+                                  type="time"
+                                  value={slot.endTime}
+                                  onChange={(e) => updateSlot({ endTime: e.target.value })}
+                                  className="flex-1 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-white font-mono"
+                                />
+                              </div>
+                              <select
+                                value={slot.modifierType}
+                                onChange={(e) =>
+                                  updateSlot({ modifierType: e.target.value as TimeSlotPricingRule['modifierType'] })
+                                }
+                                className="sm:col-span-3 bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-white"
+                              >
+                                <option value="PERCENT_DISCOUNT">Remise (-%)</option>
+                                <option value="PERCENT_SURCHARGE">Majoration (+%)</option>
+                                <option value="MULTIPLIER">Multiplicateur (×)</option>
+                              </select>
+                              <input
+                                type="number"
+                                step={slot.modifierType === 'MULTIPLIER' ? '0.05' : '1'}
+                                value={slot.modifierValue}
+                                onChange={(e) => updateSlot({ modifierValue: Number(e.target.value) })}
+                                className="sm:col-span-1 bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-emerald-300 font-mono font-bold text-right"
+                              />
+                              <div className="sm:col-span-2 flex items-center justify-end gap-1.5">
                                 <button
                                   type="button"
-                                  onClick={() => {
-                                    if (confirm(`Supprimer le palier ${plan.label} (${plan.stationType}) ?`)) {
-                                      setDraftPricing(draftPricing.filter((p) => p.id !== plan.id));
-                                    }
-                                  }}
+                                  onClick={() => updateSlot({ isActive: !slot.isActive })}
+                                  className={`px-2 py-1 rounded text-[11px] font-semibold cursor-pointer ${
+                                    slot.isActive
+                                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                                      : 'bg-slate-700 text-slate-400'
+                                  }`}
+                                >
+                                  {slot.isActive ? 'Actif' : 'Off'}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setDraftSettings({
+                                      ...draftSettings,
+                                      timeSlotPricingRules: (draftSettings.timeSlotPricingRules || []).filter(
+                                        (r) => r.id !== slot.id
+                                      ),
+                                    })
+                                  }
                                   className="text-slate-500 hover:text-rose-400 p-1 cursor-pointer"
                                 >
                                   <Trash2 className="w-3.5 h-3.5" />
                                 </button>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                      </table>
+                              </div>
+                            </div>
+
+                            <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-800">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="text-[10px] text-slate-400">Consoles :</span>
+                                {Array.from(new Set(['PS4', 'PS5', ...stations.map((s) => s.type)])).map((tp) => {
+                                  const checked = slot.applicableStationTypes.includes(tp);
+                                  return (
+                                    <label key={tp} className="flex items-center gap-1 text-[11px] text-slate-200 cursor-pointer">
+                                      <input
+                                        type="checkbox"
+                                        checked={checked}
+                                        onChange={(e) => {
+                                          const nextTypes = e.target.checked
+                                            ? Array.from(new Set([...slot.applicableStationTypes, tp]))
+                                            : slot.applicableStationTypes.filter((x) => x !== tp);
+                                          updateSlot({ applicableStationTypes: nextTypes });
+                                        }}
+                                        className="rounded border-slate-700 text-cyan-500"
+                                      />
+                                      <span>{getConsoleLabel(tp)}</span>
+                                    </label>
+                                  );
+                                })}
+                              </div>
+                              <div className="flex flex-wrap items-center gap-1">
+                                <span className="text-[10px] text-slate-400 mr-1">Jours (vide = tous) :</span>
+                                {dayLabels.map((dLabel, dIdx) => {
+                                  const selected = slot.daysOfWeek.includes(dIdx);
+                                  return (
+                                    <button
+                                      key={dLabel}
+                                      type="button"
+                                      onClick={() => {
+                                        const nextDays = selected
+                                          ? slot.daysOfWeek.filter((d) => d !== dIdx)
+                                          : [...slot.daysOfWeek, dIdx].sort();
+                                        updateSlot({ daysOfWeek: nextDays });
+                                      }}
+                                      className={`px-1.5 py-0.5 rounded text-[10px] font-mono border cursor-pointer ${
+                                        selected
+                                          ? 'bg-cyan-600/30 border-cyan-500 text-cyan-200 font-bold'
+                                          : 'bg-slate-950 border-slate-800 text-slate-400'
+                                      }`}
+                                    >
+                                      {dLabel}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
 
@@ -1890,14 +2167,21 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
                           />
                         </div>
                         <div>
-                          <label className="text-[10px] text-slate-400 block mb-1">Console</label>
+                          <label className="text-[10px] text-slate-400 block mb-1">Console ({CONSOLE_CATALOG.length} modèles)</label>
                           <select
                             value={newStationType}
-                            onChange={(e) => setNewStationType(e.target.value as 'PS4' | 'PS5')}
+                            onChange={(e) => setNewStationType(e.target.value as StationType)}
                             className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white font-bold"
                           >
-                            <option value="PS4">PS4</option>
-                            <option value="PS5">PS5</option>
+                            {CONSOLE_BRANDS.map((brand) => (
+                              <optgroup key={brand} label={brand}>
+                                {CONSOLE_CATALOG.filter((c) => c.brand === brand).map((c) => (
+                                  <option key={c.code} value={c.code}>
+                                    {c.label}
+                                  </option>
+                                ))}
+                              </optgroup>
+                            ))}
                           </select>
                         </div>
                         <div>
@@ -1923,7 +2207,7 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
                             });
                             setNewStationName('');
                             setNewStationIp('');
-                            setSaveSuccessNotification(`Station "${finalName}" (${newStationType}) ajoutée !`);
+                            setSaveSuccessNotification(`Station "${finalName}" (${getConsoleLabel(newStationType)}) ajoutée !`);
                             setTimeout(() => setSaveSuccessNotification(null), 4000);
                           }}
                           className="py-1.5 px-3 bg-cyan-600 hover:bg-cyan-500 text-white font-bold rounded-lg flex items-center justify-center gap-1 cursor-pointer"
@@ -1946,19 +2230,19 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
                       ).map((st) => {
                         const stationId = st.id;
                         const override = draftSettings.stationSpecificOverrides?.[stationId] || {};
-                        const isPS5 = st.type === 'PS5';
+                        const isHighTier = isHighTierConsole(st.type);
                         return (
                           <div
                             key={stationId}
                             className={`p-2.5 rounded-xl border text-xs space-y-2 ${
-                              isPS5
+                              isHighTier
                                 ? 'bg-cyan-950/20 border-cyan-500/30'
                                 : 'bg-slate-900/70 border-slate-700/80'
                             }`}
                           >
                             <div className="flex items-center justify-between gap-1">
-                              <span className={`font-bold font-mono ${isPS5 ? 'text-cyan-300' : 'text-blue-300'}`}>
-                                P{stationId} ({st.type})
+                              <span className={`font-bold font-mono truncate ${isHighTier ? 'text-cyan-300' : 'text-blue-300'}`}>
+                                P{stationId} ({getConsoleLabel(st.type)})
                               </span>
                               <div className="flex items-center gap-1.5">
                                 <label className="flex items-center gap-1 text-[10px] text-slate-400 cursor-pointer">
@@ -2089,65 +2373,124 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
                       </button>
                     </div>
 
-                    <div className="space-y-2">
-                      {draftSettings.promotions.map((promo, idx) => (
-                        <div
-                          key={promo.id}
-                          className="p-3.5 bg-slate-800/40 border border-slate-700 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs"
-                        >
-                          <div className="space-y-1">
-                            <div className="flex items-center gap-2">
-                              <span className="px-2 py-0.5 bg-purple-500/20 text-purple-300 font-mono font-bold rounded">
-                                {promo.code}
-                              </span>
-                              <span className="font-bold text-white">{promo.name}</span>
-                              {promo.minTierRequired && (
-                                <span className="px-1.5 py-0.2 bg-amber-500/20 text-amber-300 text-[10px] rounded font-semibold">
-                                  Rang {promo.minTierRequired}
-                                </span>
-                              )}
+                    <div className="space-y-2.5">
+                      {draftSettings.promotions.map((promo, idx) => {
+                        const updatePromo = (patch: Partial<PromotionRule>) => {
+                          const next = [...draftSettings.promotions];
+                          next[idx] = { ...next[idx], ...patch };
+                          setDraftSettings({ ...draftSettings, promotions: next });
+                        };
+                        return (
+                          <div
+                            key={promo.id}
+                            className="p-3.5 bg-slate-800/40 border border-slate-700 rounded-xl space-y-2.5 text-xs"
+                          >
+                            <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-center">
+                              <input
+                                type="text"
+                                value={promo.code}
+                                onChange={(e) => updatePromo({ code: e.target.value.toUpperCase() })}
+                                placeholder="CODE"
+                                className="sm:col-span-2 bg-slate-950 border border-purple-500/40 rounded px-2.5 py-1.5 text-purple-300 font-mono font-bold"
+                              />
+                              <input
+                                type="text"
+                                value={promo.name}
+                                onChange={(e) => updatePromo({ name: e.target.value })}
+                                placeholder="Libellé de la promo"
+                                className="sm:col-span-4 bg-slate-950 border border-slate-700 rounded px-2.5 py-1.5 text-white font-semibold"
+                              />
+                              <select
+                                value={promo.discountType}
+                                onChange={(e) =>
+                                  updatePromo({ discountType: e.target.value as PromotionRule['discountType'] })
+                                }
+                                className="sm:col-span-2 bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-white"
+                              >
+                                <option value="PERCENT">Pourcent (%)</option>
+                                <option value="FIXED_CDF">Fixe CDF</option>
+                                <option value="FIXED_USD">Fixe USD</option>
+                              </select>
+                              <input
+                                type="number"
+                                min="0"
+                                step={promo.discountType === 'FIXED_USD' ? '0.5' : '1'}
+                                value={promo.discountValue}
+                                onChange={(e) => updatePromo({ discountValue: Number(e.target.value) })}
+                                className="sm:col-span-2 bg-slate-950 border border-slate-700 rounded px-2.5 py-1.5 text-emerald-400 font-mono font-bold text-right"
+                              />
+                              <div className="sm:col-span-2 flex items-center justify-end gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => updatePromo({ isActive: !promo.isActive })}
+                                  className={`px-2.5 py-1 rounded text-[11px] font-semibold transition cursor-pointer ${
+                                    promo.isActive
+                                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                                      : 'bg-slate-700 text-slate-400'
+                                  }`}
+                                >
+                                  {promo.isActive ? 'Actif' : 'Désactivé'}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setDraftSettings({
+                                      ...draftSettings,
+                                      promotions: draftSettings.promotions.filter((p) => p.id !== promo.id),
+                                    });
+                                  }}
+                                  className="text-slate-500 hover:text-rose-400 p-1 cursor-pointer"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
                             </div>
-                            <div className="text-[11px] text-slate-400">
-                              Valeur :{' '}
-                              <strong className="text-emerald-400">
-                                {promo.discountValue}
-                                {promo.discountType === 'PERCENT' ? '%' : ' CDF'}
-                              </strong>{' '}
-                              · Postes : {promo.applicableStationTypes.join(', ')}
-                            </div>
-                          </div>
 
-                          <div className="flex items-center gap-2 shrink-0">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const next = [...draftSettings.promotions];
-                                next[idx].isActive = !next[idx].isActive;
-                                setDraftSettings({ ...draftSettings, promotions: next });
-                              }}
-                              className={`px-2.5 py-1 rounded text-[11px] font-semibold transition cursor-pointer ${
-                                promo.isActive
-                                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                                  : 'bg-slate-700 text-slate-400'
-                              }`}
-                            >
-                              {promo.isActive ? 'Actif' : 'Désactivé'}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setDraftSettings({
-                                  ...draftSettings,
-                                  promotions: draftSettings.promotions.filter((p) => p.id !== promo.id),
-                                });
-                              }}
-                              className="text-slate-500 hover:text-rose-400 p-1 cursor-pointer"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
+                            <div className="flex flex-wrap items-center justify-between gap-3 pt-1 border-t border-slate-800/80 text-[11px]">
+                              <div className="flex flex-wrap items-center gap-3">
+                                <span className="text-slate-400">Consoles :</span>
+                                {Array.from(new Set(['PS4', 'PS5', ...stations.map((s) => s.type)])).map((tp) => {
+                                  const checked = promo.applicableStationTypes.includes(tp);
+                                  return (
+                                    <label key={tp} className="flex items-center gap-1 text-slate-200 cursor-pointer">
+                                      <input
+                                        type="checkbox"
+                                        checked={checked}
+                                        onChange={(e) => {
+                                          const nextTypes = e.target.checked
+                                            ? Array.from(new Set([...promo.applicableStationTypes, tp]))
+                                            : promo.applicableStationTypes.filter((x) => x !== tp);
+                                          updatePromo({ applicableStationTypes: nextTypes });
+                                        }}
+                                        className="rounded border-slate-700 text-purple-500"
+                                      />
+                                      <span>{getConsoleLabel(tp)}</span>
+                                    </label>
+                                  );
+                                })}
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-slate-400">Rang minimum :</span>
+                                <select
+                                  value={promo.minTierRequired || ''}
+                                  onChange={(e) =>
+                                    updatePromo({
+                                      minTierRequired: e.target.value ? (e.target.value as LoyaltyTier) : undefined,
+                                    })
+                                  }
+                                  className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-amber-300"
+                                >
+                                  <option value="">Tous les clients</option>
+                                  <option value="NOUVEAU">NOUVEAU</option>
+                                  <option value="REGULIER">REGULIER</option>
+                                  <option value="FIDELE">FIDELE</option>
+                                  <option value="VIP">VIP</option>
+                                </select>
+                              </div>
+                            </div>
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 </div>
@@ -2435,15 +2778,28 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
                   </div>
 
                   <div className="p-4 bg-slate-800/40 border border-slate-700 rounded-xl space-y-3">
-                    <h3 className="text-xs font-bold text-slate-200 uppercase tracking-wider font-mono">
-                      Identifiants API WhatsApp Business Cloud (Meta Graph)
-                    </h3>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <h3 className="text-xs font-bold text-slate-200 uppercase tracking-wider font-mono">
+                        Identifiants API WhatsApp Business Cloud (Meta Graph)
+                      </h3>
+                      <span
+                        className={`text-[10px] px-2 py-0.5 rounded-full font-mono border ${
+                          whatsappConfig && hasRealMetaCredentials(whatsappConfig)
+                            ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                            : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                        }`}
+                      >
+                        {whatsappConfig && hasRealMetaCredentials(whatsappConfig)
+                          ? 'Meta API Connectée'
+                          : 'Non configuré (Simulation / wa.me)'}
+                      </span>
+                    </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
                       <div>
                         <label className="text-[11px] text-slate-400">Phone Number ID</label>
                         <input
                           type="text"
-                          defaultValue="109876543210987"
+                          value={whatsappConfig?.phoneNumberId || 'Non renseigné'}
                           className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-white font-mono text-xs"
                           readOnly
                         />
@@ -2452,30 +2808,29 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
                         <label className="text-[11px] text-slate-400">WhatsApp Business Account ID</label>
                         <input
                           type="text"
-                          defaultValue="234567890123456"
+                          value={whatsappConfig?.businessAccountId || 'Non renseigné'}
                           className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-white font-mono text-xs"
                           readOnly
                         />
                       </div>
                     </div>
 
-                    <div>
-                      <label className="text-[11px] text-slate-400">Jeton d'accès permanent (System User Token)</label>
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="password"
-                          value="EAAGxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-                          readOnly
-                          className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-slate-400 font-mono text-xs"
-                        />
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
+                      <div className="text-[11px] text-slate-400">
+                        Numéro test Sandbox :{' '}
+                        <span className="font-mono text-slate-200">
+                          {whatsappConfig?.testPhoneNumber || '+243895457097'}
+                        </span>
+                      </div>
+                      {onOpenWhatsAppConfig && (
                         <button
                           type="button"
-                          onClick={() => alert('Pour modifier le jeton Meta, rendez-vous dans le panneau dédié WhatsApp Config')}
-                          className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded text-xs whitespace-nowrap cursor-pointer"
+                          onClick={onOpenWhatsAppConfig}
+                          className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg text-xs whitespace-nowrap cursor-pointer transition shadow"
                         >
-                          Remplacer le jeton
+                          Configurer clés Meta &amp; Tester l'envoi WhatsApp
                         </button>
-                      </div>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -2653,11 +3008,64 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
                       <p className="text-[11px] text-slate-400">Évite la consommation résiduelle des écrans inutilisés.</p>
                     </div>
 
-                    <div className="p-4 bg-slate-800/50 border border-slate-700 rounded-xl space-y-2">
-                      <label className="block text-xs font-semibold text-slate-200">
-                        Horaires d’allumage et extinction automatique (Climatisation & Éclairage)
-                      </label>
+                    <div className="p-4 bg-slate-800/50 border border-slate-700 rounded-xl space-y-2.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <label className="block text-xs font-semibold text-slate-200">
+                          Horaires d’allumage et extinction automatique (Climatisation &amp; Éclairage)
+                        </label>
+                        <label className="flex items-center gap-1.5 text-[11px] text-cyan-300 font-semibold cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={Boolean(draftSettings.lightingACSchedule?.enabled)}
+                            onChange={(e) =>
+                              setDraftSettings({
+                                ...draftSettings,
+                                lightingACSchedule: {
+                                  ...draftSettings.lightingACSchedule,
+                                  enabled: e.target.checked,
+                                },
+                              })
+                            }
+                            className="rounded border-slate-700 text-cyan-500"
+                          />
+                          <span>Actif</span>
+                        </label>
+                      </div>
                       <div className="grid grid-cols-2 gap-2 text-xs">
+                        <div>
+                          <span className="text-[10px] text-amber-300">Allumage Éclairage :</span>
+                          <input
+                            type="time"
+                            value={draftSettings.lightingACSchedule.lightOnTime}
+                            onChange={(e) =>
+                              setDraftSettings({
+                                ...draftSettings,
+                                lightingACSchedule: {
+                                  ...draftSettings.lightingACSchedule,
+                                  lightOnTime: e.target.value,
+                                },
+                              })
+                            }
+                            className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white font-mono text-xs"
+                          />
+                        </div>
+                        <div>
+                          <span className="text-[10px] text-amber-300">Extinction Éclairage :</span>
+                          <input
+                            type="time"
+                            value={draftSettings.lightingACSchedule.lightOffTime}
+                            onChange={(e) =>
+                              setDraftSettings({
+                                ...draftSettings,
+                                lightingACSchedule: {
+                                  ...draftSettings.lightingACSchedule,
+                                  lightOffTime: e.target.value,
+                                },
+                              })
+                            }
+                            className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white font-mono text-xs"
+                          />
+                        </div>
                         <div>
                           <span className="text-[10px] text-slate-400">Allumage Clim :</span>
                           <input
@@ -2736,7 +3144,7 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
                         />
                       </div>
                     </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 border-t border-slate-700/60 text-xs">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-2 border-t border-slate-700/60 text-xs">
                       <label className="flex items-center gap-2 text-slate-300 cursor-pointer">
                         <input
                           type="checkbox"
@@ -2770,6 +3178,38 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
                         />
                         <span>Alertes sonores guichet</span>
                       </label>
+                      <label className="flex items-center gap-2 text-slate-300 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={draftSettings.voiceAlertsEnabled ?? true}
+                          onChange={(e) =>
+                            setDraftSettings({ ...draftSettings, voiceAlertsEnabled: e.target.checked })
+                          }
+                          className="rounded border-slate-700 text-cyan-500"
+                        />
+                        <span>Alertes parlantes (Voix FR)</span>
+                      </label>
+                    </div>
+
+                    <div className="pt-2 border-t border-slate-700/60 flex flex-wrap items-center justify-between gap-2">
+                      <div className="text-[11px] text-slate-400">
+                        {voiceTestResult || 'Testez le carillon + la synthèse vocale française sur cet appareil.'}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const diag = soundService.playTestVoiceAndSound();
+                          setVoiceTestResult(
+                            diag.supported
+                              ? `Test lancé (${diag.frenchVoiceName ? `Voix : ${diag.frenchVoiceName}` : 'Synthèse vocale FR système active'}).`
+                              : 'Synthèse vocale non prise en charge par ce navigateur (bips sonores actifs).'
+                          );
+                        }}
+                        className="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white font-bold rounded-lg text-xs flex items-center gap-1.5 cursor-pointer transition"
+                      >
+                        <Volume2 className="w-3.5 h-3.5" />
+                        <span>Tester l'alerte parlante &amp; son</span>
+                      </button>
                     </div>
                   </div>
                 </div>

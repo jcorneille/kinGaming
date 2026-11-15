@@ -12,8 +12,9 @@ import {
   ChevronRight,
   Tv
 } from 'lucide-react';
-import { QueueEntry, Station, QueuePriority } from '../types';
+import { QueueEntry, Station, QueuePriority, StationType } from '../types';
 import { soundService } from '../services/soundService';
+import { getConsoleLabel } from '../services/consoleCatalog';
 
 interface QueueViewProps {
   queue: QueueEntry[];
@@ -37,7 +38,7 @@ export const QueueView: React.FC<QueueViewProps> = ({
   const [showAddForm, setShowAddForm] = useState(false);
   const [clientName, setClientName] = useState('');
   const [phone, setPhone] = useState('+243 ');
-  const [desiredStationType, setDesiredStationType] = useState<'PS4' | 'PS5' | 'ANY'>('ANY');
+  const [desiredStationType, setDesiredStationType] = useState<StationType | 'ANY'>('ANY');
   const [desiredDurationMinutes, setDesiredDurationMinutes] = useState(30);
   const [priorityLevel, setPriorityLevel] = useState<QueuePriority>('NORMAL');
 
@@ -45,7 +46,7 @@ export const QueueView: React.FC<QueueViewProps> = ({
   const waitingEntries = queue.filter(q => q.status === 'waiting' || q.status === 'called');
 
   // Calcul du temps d'attente estimé
-  const calculateEstimatedWait = (entryType: 'PS4' | 'PS5' | 'ANY', indexInQueue: number): number => {
+  const calculateEstimatedWait = (entryType: StationType | 'ANY', indexInQueue: number): number => {
     // Postes ciblés
     const targetStations = stations.filter(s => {
       if (entryType === 'ANY') return true;
@@ -86,7 +87,6 @@ export const QueueView: React.FC<QueueViewProps> = ({
   };
 
   const handleCall = (entry: QueueEntry) => {
-    soundService.playQueueCallChime();
     onCallClient(entry.id);
   };
 
@@ -175,12 +175,15 @@ export const QueueView: React.FC<QueueViewProps> = ({
               <label className="text-[11px] font-semibold text-slate-400 block mb-1">Console souhaitée</label>
               <select
                 value={desiredStationType}
-                onChange={(e) => setDesiredStationType(e.target.value as 'PS4' | 'PS5' | 'ANY')}
+                onChange={(e) => setDesiredStationType(e.target.value as StationType | 'ANY')}
                 className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500"
               >
                 <option value="ANY">Peu importe (Premier libre)</option>
-                <option value="PS4">PlayStation 4</option>
-                <option value="PS5">PlayStation 5 (VIP)</option>
+                {Array.from(new Set(['PS4', 'PS5', ...stations.map((s) => s.type)])).map((tp) => (
+                  <option key={tp} value={tp}>
+                    {getConsoleLabel(tp)}
+                  </option>
+                ))}
               </select>
             </div>
 
@@ -321,20 +324,26 @@ export const QueueView: React.FC<QueueViewProps> = ({
                   <div className="flex items-center gap-1.5">
                     {/* Notification WhatsApp Officielle Meta Cloud API */}
                     {entry.phone.length > 8 && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (onSendWhatsAppDirect) {
-                            onSendWhatsAppDirect(entry);
-                          } else {
-                            window.open(whatsappUrl, '_blank');
-                          }
-                        }}
-                        title="Envoyer notification WhatsApp Business Cloud (Graph API)"
-                        className="p-2 text-emerald-400 hover:text-white hover:bg-emerald-600 rounded-lg transition"
-                      >
-                        <MessageSquare className="w-4 h-4" />
-                      </button>
+                      onSendWhatsAppDirect ? (
+                        <button
+                          type="button"
+                          onClick={() => onSendWhatsAppDirect(entry)}
+                          title="Envoyer notification WhatsApp (Meta API ou wa.me)"
+                          className="p-2 text-emerald-400 hover:text-white hover:bg-emerald-600 rounded-lg transition cursor-pointer"
+                        >
+                          <MessageSquare className="w-4 h-4" />
+                        </button>
+                      ) : (
+                        <a
+                          href={whatsappUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          title="Envoyer via WhatsApp (wa.me)"
+                          className="p-2 text-emerald-400 hover:text-white hover:bg-emerald-600 rounded-lg transition inline-flex"
+                        >
+                          <MessageSquare className="w-4 h-4" />
+                        </a>
+                      )
                     )}
 
                     {/* Alerte Sonore & Appel */}

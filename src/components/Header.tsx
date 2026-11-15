@@ -18,9 +18,12 @@ import {
   MessageSquare,
   LogOut,
   ChevronDown,
-  UserCog
+  UserCog,
+  Volume2,
+  VolumeX
 } from 'lucide-react';
 import { SystemSettings, StaffRole, StaffUser, Station } from '../types';
+import { soundService } from '../services/soundService';
 
 export type ActiveTab = 
   | 'stations' 
@@ -52,6 +55,8 @@ interface HeaderProps {
   isInstallable: boolean;
   onInstall: () => void;
   waitingCount: number;
+  pendingSyncCount?: number;
+  onSyncNow?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -70,6 +75,8 @@ export const Header: React.FC<HeaderProps> = ({
   isInstallable,
   onInstall,
   waitingCount,
+  pendingSyncCount = 0,
+  onSyncNow,
 }) => {
   const role: StaffRole = currentStaffUser?.role || 'CAISSIER';
   const isAdmin = role === 'ADMIN';
@@ -299,15 +306,59 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
           )}
 
-          {/* Connectivité Internet */}
-          <div
-            title={isOnline ? 'Réseau opérationnel' : 'Mode Hors-ligne — Cache local'}
-            className={`flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-mono font-medium ${
-              isOnline ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
+          {/* Bouton rapide Test / État Alertes Parlantes & Sonores */}
+          <button
+            type="button"
+            onClick={() => soundService.playTestVoiceAndSound()}
+            title={
+              settings.soundAlertsEnabled && (settings.voiceAlertsEnabled ?? true)
+                ? 'Alertes parlantes actives — Cliquer pour tester la voix & débloquer l’audio'
+                : 'Alertes sonores/vocales désactivées (cliquer pour test audio)'
+            }
+            className={`hidden sm:flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold border transition cursor-pointer ${
+              settings.soundAlertsEnabled && (settings.voiceAlertsEnabled ?? true)
+                ? 'bg-cyan-500/10 text-cyan-300 border-cyan-500/30 hover:bg-cyan-500/20'
+                : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-white'
+            }`}
+          >
+            {settings.soundAlertsEnabled ? (
+              <Volume2 className="w-3.5 h-3.5 text-cyan-400" />
+            ) : (
+              <VolumeX className="w-3.5 h-3.5 text-slate-400" />
+            )}
+            <span className="hidden lg:inline">Voix</span>
+          </button>
+
+          {/* Connectivité Internet & File de Synchronisation Hors-Ligne */}
+          <button
+            type="button"
+            onClick={() => {
+              if (isOnline && pendingSyncCount > 0 && onSyncNow) {
+                onSyncNow();
+              }
+            }}
+            title={
+              isOnline
+                ? pendingSyncCount > 0
+                  ? `${pendingSyncCount} élément(s) en attente — Cliquer pour synchroniser`
+                  : 'Réseau opérationnel & synchronisé'
+                : `Mode Hors-ligne — ${pendingSyncCount} opération(s) en file d'attente locale`
+            }
+            className={`flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs font-mono font-medium transition ${
+              isOnline
+                ? pendingSyncCount > 0
+                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 cursor-pointer hover:bg-amber-500/30'
+                  : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                : 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
             }`}
           >
             {isOnline ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
-          </div>
+            {pendingSyncCount > 0 && (
+              <span className="px-1 py-0.2 bg-amber-500 text-slate-950 font-black text-[10px] rounded">
+                {pendingSyncCount}
+              </span>
+            )}
+          </button>
 
           {/* Menu Déroulant Profil Utilisateur (Mon profil, Verrouiller, Déconnexion) */}
           <div className="relative" ref={profileMenuRef}>

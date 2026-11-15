@@ -1,4 +1,4 @@
-export type StationType = 'PS4' | 'PS5';
+export type StationType = string;
 
 export type StationStatus = 'available' | 'occupied' | 'reserved' | 'maintenance';
 
@@ -101,9 +101,15 @@ export interface Ticket {
   createdAt: number;
   extendedCount: number;
   autoReleased?: boolean; // Indique si libéré automatiquement à 0m
+  autoReleaseCancelledAt?: number;
   notes?: string;
   appliedExchangeRate?: number; // Taux USD/CDF figé à la création
   pricingPlanSnapshot?: { label: string; priceUSD: number; priceCDF: number }; // Grille figée
+  appliedTimeSlotLabel?: string;
+  appliedTimeSlotPercent?: number;
+  appliedPromoCode?: string;
+  appliedPromoDiscountCDF?: number;
+  transferredFromStationId?: number;
 }
 
 // 2.14 Statuts Clients : Nouveau → Régulier → Fidèle → VIP
@@ -217,7 +223,7 @@ export interface QueueEntry {
   phone: string;
   clientId?: string;
   clientTier?: LoyaltyTier;
-  desiredStationType: 'PS4' | 'PS5' | 'ANY';
+  desiredStationType: StationType | 'ANY';
   desiredDurationMinutes: number;
   arrivalTime: number;
   priorityLevel: QueuePriority;
@@ -292,6 +298,8 @@ export interface SnackSale {
   totalCDF: number;
   totalUSD: number;
   paymentMethod: PaymentMethod;
+  paymentReference?: string;
+  mixedBreakdown?: MixedPaymentBreakdown;
   timestamp: number;
   cashierName: string;
 }
@@ -349,10 +357,22 @@ export interface PromotionRule {
   name: string;
   discountType: 'PERCENT' | 'FIXED_CDF' | 'FIXED_USD';
   discountValue: number;
-  applicableStationTypes: ('PS4' | 'PS5')[];
+  applicableStationTypes: StationType[];
   minTierRequired?: LoyaltyTier;
   validFrom?: number;
   validUntil?: number;
+  isActive: boolean;
+}
+
+export interface TimeSlotPricingRule {
+  id: string;
+  name: string;
+  startTime: string; // "HH:MM"
+  endTime: string;   // "HH:MM"
+  daysOfWeek: number[]; // 0=Dim .. 6=Sam, vide = tous les jours
+  modifierType: 'PERCENT_DISCOUNT' | 'PERCENT_SURCHARGE' | 'MULTIPLIER';
+  modifierValue: number; // ex: 15 => -15% ou +15%, ou 1.2 => x1.2
+  applicableStationTypes: StationType[];
   isActive: boolean;
 }
 
@@ -418,6 +438,8 @@ export interface SystemSettings {
   toleranceMinutes: number; // e.g. 5 min de dépassement gratuit avant palier
   extraControllerSurchargePercent: number; // e.g. 25%
   stationSpecificOverrides: Record<number, { customName?: string; priceMultiplier?: number; disabled?: boolean }>;
+  enableTimeSlotPricing?: boolean;
+  timeSlotPricingRules?: TimeSlotPricingRule[];
 
   // Section 3: Remises et promotions
   managerMaxDiscountPercent: number; // e.g. 20% max sans admin
@@ -452,6 +474,7 @@ export interface SystemSettings {
   idleAutoCutMinutes: number; // auto turn off plug if idle for X minutes
   warningBeforeCutMinutes: number; // sound chime X minutes before end
   soundAlertsEnabled: boolean;
+  voiceAlertsEnabled?: boolean; // alertes parlantes (synthèse vocale FR)
   mqttBrokerHost: string;
   mqttBrokerPort: number;
   mqttUsername: string;

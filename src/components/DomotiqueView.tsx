@@ -26,6 +26,7 @@ interface DomotiqueViewProps {
   onMasterPowerOff: () => void;
   onMasterPowerOn: () => void;
   onUpdateSettings: (newSettings: Partial<SystemSettings>) => void;
+  onApplyScheduleNow?: () => void;
 }
 
 export const DomotiqueView: React.FC<DomotiqueViewProps> = ({
@@ -36,6 +37,7 @@ export const DomotiqueView: React.FC<DomotiqueViewProps> = ({
   onMasterPowerOff,
   onMasterPowerOn,
   onUpdateSettings,
+  onApplyScheduleNow,
 }) => {
   const [selectedSubTab, setSelectedSubTab] = useState<'rack' | 'automations' | 'mqtt_logs' | 'config'>('rack');
   const [packetLogs, setPacketLogs] = useState<MqttPacketLog[]>(mqttGateway.getLogs());
@@ -182,7 +184,9 @@ export const DomotiqueView: React.FC<DomotiqueViewProps> = ({
         <div className="space-y-4">
           <div className="text-xs text-slate-400 flex items-center justify-between">
             <span>Cliquez sur un relais pour basculer son alimentation. La sécurité bloque la coupure impromptue des postes en jeu.</span>
-            <span className="font-mono text-cyan-400">10 Prises Postes + 4 Lignes Auxiliaires</span>
+            <span className="font-mono text-cyan-400">
+              {devices.filter((d) => d.stationId).length} Prises Postes + {devices.filter((d) => !d.stationId).length} Lignes Auxiliaires
+            </span>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -335,6 +339,106 @@ export const DomotiqueView: React.FC<DomotiqueViewProps> = ({
                 />
                 <span className="text-xs text-slate-400">minutes</span>
               </div>
+            </div>
+
+            {/* Règle 5 : Horaires automatiques Éclairage & Climatisation */}
+            <div className="p-4 bg-slate-800/60 rounded-xl border border-cyan-500/30 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <span className="text-sm font-bold text-white flex items-center gap-2">
+                    <Lightbulb className="w-4 h-4 text-amber-400" />
+                    <Thermometer className="w-4 h-4 text-cyan-400" />
+                    <span>Horaires Automatiques Éclairage &amp; Climatisation</span>
+                  </span>
+                  <span className="text-xs text-slate-400 block mt-0.5">
+                    Pilote automatiquement les relais d&apos;éclairage néon/enseigne et climatiseurs/extracteurs chaque minute.
+                  </span>
+                </div>
+                <label className="flex items-center gap-2 text-xs font-bold text-cyan-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(settings.lightingACSchedule?.enabled)}
+                    onChange={(e) =>
+                      onUpdateSettings({
+                        lightingACSchedule: {
+                          ...settings.lightingACSchedule,
+                          enabled: e.target.checked,
+                        },
+                      })
+                    }
+                    className="w-4 h-4 rounded text-cyan-600 cursor-pointer"
+                  />
+                  <span>Activer planification</span>
+                </label>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                <div>
+                  <label className="text-[11px] text-amber-300 block mb-1">Allumage Éclairage</label>
+                  <input
+                    type="time"
+                    value={settings.lightingACSchedule?.lightOnTime || '17:30'}
+                    onChange={(e) =>
+                      onUpdateSettings({
+                        lightingACSchedule: { ...settings.lightingACSchedule, lightOnTime: e.target.value },
+                      })
+                    }
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] text-amber-300 block mb-1">Extinction Éclairage</label>
+                  <input
+                    type="time"
+                    value={settings.lightingACSchedule?.lightOffTime || '23:30'}
+                    onChange={(e) =>
+                      onUpdateSettings({
+                        lightingACSchedule: { ...settings.lightingACSchedule, lightOffTime: e.target.value },
+                      })
+                    }
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] text-cyan-300 block mb-1">Allumage Clim</label>
+                  <input
+                    type="time"
+                    value={settings.lightingACSchedule?.acOnTime || '10:00'}
+                    onChange={(e) =>
+                      onUpdateSettings({
+                        lightingACSchedule: { ...settings.lightingACSchedule, acOnTime: e.target.value },
+                      })
+                    }
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] text-cyan-300 block mb-1">Extinction Clim</label>
+                  <input
+                    type="time"
+                    value={settings.lightingACSchedule?.acOffTime || '23:00'}
+                    onChange={(e) =>
+                      onUpdateSettings({
+                        lightingACSchedule: { ...settings.lightingACSchedule, acOffTime: e.target.value },
+                      })
+                    }
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white font-mono"
+                  />
+                </div>
+              </div>
+
+              {onApplyScheduleNow && (
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    onClick={onApplyScheduleNow}
+                    className="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold rounded-lg flex items-center gap-1.5 cursor-pointer transition"
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>Appliquer l&apos;horaire actuel maintenant</span>
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>
