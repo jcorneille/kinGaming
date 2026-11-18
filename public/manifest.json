@@ -1,8 +1,8 @@
 {
   "id": "/",
-  "name": "Kin Gaming Hub",
-  "short_name": "KinGamingHub",
-  "description": "Gestion de salle de jeux vidéo (8 PS4, 2 PS5) à Kinshasa avec domotique IoT, bidevise CDF/USD et billetterie express.",
+  "name": "GOZA",
+  "short_name": "GOZA",
+  "description": "GOZA : Gestion de salle de jeux vidéo (PS4, PS5) à Kinshasa avec domotique IoT, bidevise CDF/USD et billetterie express.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

@@ -4,7 +4,7 @@
 export function printThermalReceiptElement(
   element: HTMLElement | null,
   paperSize: '58mm' | '80mm' = '80mm',
-  documentTitle = 'Reçu Thermique - Kin Gaming Hub'
+  documentTitle = 'Reçu Thermique - GOZA'
 ): boolean {
   if (typeof window === 'undefined' || typeof document === 'undefined') return false;
 

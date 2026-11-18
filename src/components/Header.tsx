@@ -20,12 +20,17 @@ import {
   ChevronDown,
   UserCog,
   Volume2,
-  VolumeX
+  VolumeX,
+  LayoutDashboard,
+  PanelLeft,
+  PanelTop,
 } from 'lucide-react';
 import { SystemSettings, StaffRole, StaffUser, Station } from '../types';
 import { soundService } from '../services/soundService';
+import { GozaPs5HeaderBanner } from './GozaPs5HeaderBanner';
 
 export type ActiveTab = 
+  | 'dashboard'
   | 'stations' 
   | 'tickets' 
   | 'queue' 
@@ -38,9 +43,13 @@ export type ActiveTab =
   | 'settings'
   | 'login';
 
+export type NavLayoutMode = 'horizontal' | 'sidebar';
+
 interface HeaderProps {
   activeTab: ActiveTab;
   setActiveTab: (tab: ActiveTab) => void;
+  navLayout: NavLayoutMode;
+  onToggleNavLayout: () => void;
   settings: SystemSettings;
   setSettings: React.Dispatch<React.SetStateAction<SystemSettings>>;
   stations?: Station[];
@@ -62,7 +71,10 @@ interface HeaderProps {
 export const Header: React.FC<HeaderProps> = ({
   activeTab,
   setActiveTab,
+  navLayout,
+  onToggleNavLayout,
   settings,
+  setSettings,
   stations = [],
   currentStaffUser,
   onLockSession,
@@ -81,8 +93,7 @@ export const Header: React.FC<HeaderProps> = ({
   const role: StaffRole = currentStaffUser?.role || 'CAISSIER';
   const isAdmin = role === 'ADMIN';
   const isGerantOrAdmin = role === 'GERANT' || role === 'ADMIN';
-  const ps4Count = stations.length > 0 ? stations.filter((s) => s.type === 'PS4').length : 8;
-  const ps5Count = stations.length > 0 ? stations.filter((s) => s.type === 'PS5').length : 2;
+  void stations;
 
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
   const profileMenuRef = useRef<HTMLDivElement>(null);
@@ -107,172 +118,160 @@ export const Header: React.FC<HeaderProps> = ({
   }, []);
 
   return (
-    <header className="bg-slate-900/95 backdrop-blur-md border-b border-slate-800 sticky top-0 z-40 px-4 lg:px-6 py-2.5">
-      <div className="max-w-7xl mx-auto flex items-center justify-between gap-4 lg:gap-8">
-        {/* Zone 1: Brand Wordmark (Clic vers page d'accueil login) */}
-        <button
-          onClick={() => setActiveTab('login')}
-          className="flex items-center gap-2.5 shrink-0 text-left hover:opacity-90 transition cursor-pointer"
-          title="Accueil & Connexion"
-        >
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-blue-600 to-cyan-500 flex items-center justify-center shadow-lg shadow-blue-500/20">
-            <Gamepad2 className="w-5 h-5 text-white" />
-          </div>
-          <div>
-            <span className="text-base lg:text-lg font-bold tracking-tight text-white whitespace-nowrap">
-              Kin Gaming Hub
-            </span>
-            <div className="text-[10px] text-slate-400 font-mono tracking-wider flex items-center gap-1.5">
-              <span>{ps4Count} PS4</span>
-              <span>·</span>
-              <span className="text-cyan-400 font-semibold">{ps5Count} PS5</span>
-              <span>·</span>
-              <span>KINSHASA</span>
-            </div>
-          </div>
-        </button>
-
-        {/* Zone 2: Navigation Links selon les rôles RBAC */}
-        <nav className="flex items-center gap-1 overflow-x-auto no-scrollbar py-1">
-          <button
-            onClick={() => setActiveTab('stations')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 ${
-              activeTab === 'stations'
-                ? 'bg-blue-600 text-white shadow-sm'
-                : 'text-slate-300 hover:text-white hover:bg-slate-800'
-            }`}
-          >
-            <Tv className="w-3.5 h-3.5" />
-            <span>Postes Live</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('tickets')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 ${
-              activeTab === 'tickets'
-                ? 'bg-blue-600 text-white shadow-sm'
-                : 'text-slate-300 hover:text-white hover:bg-slate-800'
-            }`}
-          >
-            <Gamepad2 className="w-3.5 h-3.5" />
-            <span>Billetterie</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('queue')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 relative ${
-              activeTab === 'queue'
-                ? 'bg-blue-600 text-white shadow-sm'
-                : 'text-slate-300 hover:text-white hover:bg-slate-800'
-            }`}
-          >
-            <Users className="w-3.5 h-3.5" />
-            <span>File d'attente</span>
-            {waitingCount > 0 && (
-              <span className="ml-1 px-1.5 py-0.2 bg-amber-500 text-slate-950 font-bold text-[10px] rounded-full">
-                {waitingCount}
-              </span>
-            )}
-          </button>
-
-          <button
-            onClick={() => setActiveTab('loyalty')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 ${
-              activeTab === 'loyalty'
-                ? 'bg-blue-600 text-white shadow-sm'
-                : 'text-slate-300 hover:text-white hover:bg-slate-800'
-            }`}
-          >
-            <Award className="w-3.5 h-3.5" />
-            <span>Fidélité & Statuts</span>
-          </button>
-
-          {/* Domotique accessible Gérant et Admin */}
-          {isGerantOrAdmin && (
+    <header className="bg-slate-900/95 backdrop-blur-md border-b border-slate-800 sticky top-0 z-40 w-full px-4 sm:px-6 lg:px-8 py-2.5">
+      <div className="w-full flex items-center justify-between gap-4 lg:gap-6">
+        {/* Zone 2: Navigation Links selon les rôles RBAC (mode horizontal) */}
+        {navLayout === 'horizontal' ? (
+          <nav className="flex items-center gap-1 overflow-x-auto no-scrollbar py-1">
             <button
-              onClick={() => setActiveTab('domotique')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 ${
-                activeTab === 'domotique'
-                  ? 'bg-cyan-600 text-white shadow-sm'
-                  : 'text-slate-300 hover:text-white hover:bg-slate-800'
-              }`}
-            >
-              <Zap className="w-3.5 h-3.5" />
-              <span>Domotique IoT</span>
-            </button>
-          )}
-
-          <button
-            onClick={() => setActiveTab('cash')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 ${
-              activeTab === 'cash'
-                ? 'bg-blue-600 text-white shadow-sm'
-                : 'text-slate-300 hover:text-white hover:bg-slate-800'
-            }`}
-          >
-            <ShoppingBag className="w-3.5 h-3.5" />
-            <span>Caisse & Snacks</span>
-          </button>
-
-          {/* Rapports réservés Gérant et Admin */}
-          {isGerantOrAdmin && (
-            <button
-              onClick={() => setActiveTab('reports')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 ${
-                activeTab === 'reports'
+              onClick={() => setActiveTab('dashboard')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                activeTab === 'dashboard'
                   ? 'bg-blue-600 text-white shadow-sm'
                   : 'text-slate-300 hover:text-white hover:bg-slate-800'
               }`}
             >
-              <BarChart3 className="w-3.5 h-3.5" />
-              <span>Rapports</span>
+              <LayoutDashboard className="w-3.5 h-3.5" />
+              <span>Tableau de bord</span>
             </button>
-          )}
 
-          <button
-            onClick={() => setActiveTab('guide')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 ${
-              activeTab === 'guide'
-                ? 'bg-emerald-600 text-white shadow-sm'
-                : 'text-slate-300 hover:text-white hover:bg-slate-800'
-            }`}
-          >
-            <BookOpen className="w-3.5 h-3.5" />
-            <span>Guide & Tests</span>
-          </button>
-
-          {/* Accès Portail Joueur (Espace Client aux couleurs dorées du logo) */}
-          <button
-            onClick={() => setActiveTab('customer_portal')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition-all whitespace-nowrap shrink-0 cursor-pointer ${
-              activeTab === 'customer_portal'
-                ? 'bg-gradient-to-r from-amber-500 to-yellow-500 text-slate-950 font-black shadow-lg shadow-amber-500/30 ring-2 ring-amber-400'
-                : 'bg-amber-950/40 border border-amber-500/50 text-amber-300 hover:bg-amber-900/60 hover:text-white shadow-sm'
-            }`}
-          >
-            <Award className="w-3.5 h-3.5 text-amber-400" />
-            <span>Espace Client</span>
-          </button>
-
-          {/* Réglages UNIQUEMENT visibles et accessibles par l'Administrateur (Section 2.18) */}
-          {isAdmin && (
             <button
-              onClick={() => setActiveTab('settings')}
-              title="Panneau de Configuration Administrateur (Prix PS4/PS5, Taux $, Domotique, Sécurité...)"
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition-all whitespace-nowrap shrink-0 cursor-pointer ${
-                activeTab === 'settings'
-                  ? 'bg-rose-600 text-white shadow-md shadow-rose-600/30 ring-1 ring-rose-400'
-                  : 'bg-rose-950/40 border border-rose-500/40 text-rose-300 hover:bg-rose-900/60 hover:text-white'
+              onClick={() => setActiveTab('stations')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                activeTab === 'stations'
+                  ? 'bg-blue-600 text-white shadow-sm'
+                  : 'text-slate-300 hover:text-white hover:bg-slate-800'
               }`}
             >
-              <Sliders className="w-3.5 h-3.5 text-rose-400" />
-              <span>Configuration</span>
+              <Tv className="w-3.5 h-3.5" />
+              <span>Postes Live</span>
             </button>
-          )}
-        </nav>
+
+            <button
+              onClick={() => setActiveTab('tickets')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                activeTab === 'tickets'
+                  ? 'bg-blue-600 text-white shadow-sm'
+                  : 'text-slate-300 hover:text-white hover:bg-slate-800'
+              }`}
+            >
+              <Gamepad2 className="w-3.5 h-3.5" />
+              <span>Billetterie</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('queue')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 relative cursor-pointer ${
+                activeTab === 'queue'
+                  ? 'bg-blue-600 text-white shadow-sm'
+                  : 'text-slate-300 hover:text-white hover:bg-slate-800'
+              }`}
+            >
+              <Users className="w-3.5 h-3.5" />
+              <span>File d'attente</span>
+              {waitingCount > 0 && (
+                <span className="ml-1 px-1.5 py-0.2 bg-amber-500 text-slate-950 font-bold text-[10px] rounded-full">
+                  {waitingCount}
+                </span>
+              )}
+            </button>
+
+            <button
+              onClick={() => setActiveTab('loyalty')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                activeTab === 'loyalty'
+                  ? 'bg-blue-600 text-white shadow-sm'
+                  : 'text-slate-300 hover:text-white hover:bg-slate-800'
+              }`}
+            >
+              <Award className="w-3.5 h-3.5" />
+              <span>Fidélité & Statuts</span>
+            </button>
+
+            {/* Domotique accessible Gérant et Admin */}
+            {isGerantOrAdmin && (
+              <button
+                onClick={() => setActiveTab('domotique')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                  activeTab === 'domotique'
+                    ? 'bg-cyan-600 text-white shadow-sm'
+                    : 'text-slate-300 hover:text-white hover:bg-slate-800'
+                }`}
+              >
+                <Zap className="w-3.5 h-3.5" />
+                <span>Domotique IoT</span>
+              </button>
+            )}
+
+            <button
+              onClick={() => setActiveTab('cash')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                activeTab === 'cash'
+                  ? 'bg-blue-600 text-white shadow-sm'
+                  : 'text-slate-300 hover:text-white hover:bg-slate-800'
+              }`}
+            >
+              <ShoppingBag className="w-3.5 h-3.5" />
+              <span>Caisse & Snacks</span>
+            </button>
+
+            {/* Rapports réservés Gérant et Admin */}
+            {isGerantOrAdmin && (
+              <button
+                onClick={() => setActiveTab('reports')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                  activeTab === 'reports'
+                    ? 'bg-blue-600 text-white shadow-sm'
+                    : 'text-slate-300 hover:text-white hover:bg-slate-800'
+                }`}
+              >
+                <BarChart3 className="w-3.5 h-3.5" />
+                <span>Rapports</span>
+              </button>
+            )}
+
+            <button
+              onClick={() => setActiveTab('guide')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                activeTab === 'guide'
+                  ? 'bg-emerald-600 text-white shadow-sm'
+                  : 'text-slate-300 hover:text-white hover:bg-slate-800'
+              }`}
+            >
+              <BookOpen className="w-3.5 h-3.5" />
+              <span>Guide & Tests</span>
+            </button>
+          </nav>
+        ) : (
+          <GozaPs5HeaderBanner venueName={settings.venueName || 'GOZA'} />
+        )}
 
         {/* Zone 3: Profil Équipier, Admin Tools, Status */}
         <div className="flex items-center gap-2 shrink-0">
+          {/* Bouton bascule position menu : Latéral gauche sous GOZA <-> Horizontal */}
+          <button
+            type="button"
+            onClick={onToggleNavLayout}
+            title={
+              navLayout === 'horizontal'
+                ? 'Passer le menu en barre latérale gauche (sous GOZA)'
+                : 'Remettre le menu en barre horizontale en haut'
+            }
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-slate-700 transition cursor-pointer shrink-0"
+          >
+            {navLayout === 'horizontal' ? (
+              <>
+                <PanelLeft className="w-3.5 h-3.5" />
+                <span className="hidden xl:inline">Menu latéral</span>
+              </>
+            ) : (
+              <>
+                <PanelTop className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Menu horizontal</span>
+              </>
+            )}
+          </button>
+
           {/* Taux de change bidevise */}
           <div className="hidden sm:flex items-center bg-slate-800/80 border border-slate-700 rounded-lg px-2.5 py-1 text-xs">
             <span className="text-slate-400 mr-1.5">Taux :</span>
@@ -306,28 +305,50 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
           )}
 
-          {/* Bouton rapide Test / État Alertes Parlantes & Sonores */}
-          <button
-            type="button"
-            onClick={() => soundService.playTestVoiceAndSound()}
-            title={
-              settings.soundAlertsEnabled && (settings.voiceAlertsEnabled ?? true)
-                ? 'Alertes parlantes actives — Cliquer pour tester la voix & débloquer l’audio'
-                : 'Alertes sonores/vocales désactivées (cliquer pour test audio)'
-            }
-            className={`hidden sm:flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold border transition cursor-pointer ${
-              settings.soundAlertsEnabled && (settings.voiceAlertsEnabled ?? true)
-                ? 'bg-cyan-500/10 text-cyan-300 border-cyan-500/30 hover:bg-cyan-500/20'
-                : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-white'
-            }`}
-          >
-            {settings.soundAlertsEnabled ? (
-              <Volume2 className="w-3.5 h-3.5 text-cyan-400" />
-            ) : (
-              <VolumeX className="w-3.5 h-3.5 text-slate-400" />
-            )}
-            <span className="hidden lg:inline">Voix</span>
-          </button>
+          {/* Bouton rapide Test & Choix Voix Humaine (Féminine / Mâle) */}
+          <div className="hidden sm:flex items-center bg-slate-800/90 border border-slate-700 rounded-lg overflow-hidden">
+            <button
+              type="button"
+              onClick={() => {
+                const gender = settings.voiceGender || 'FEMALE';
+                soundService.playTestVoiceAndSound(gender);
+              }}
+              title={
+                settings.soundAlertsEnabled && (settings.voiceAlertsEnabled ?? true)
+                  ? `Tester l'alerte parlante (${settings.voiceGender === 'MALE' ? 'Voix Masculine' : 'Voix Féminine'})`
+                  : 'Alertes sonores/vocales désactivées (cliquer pour test audio)'
+              }
+              className={`flex items-center gap-1 px-2 py-1 text-[11px] font-semibold transition cursor-pointer ${
+                settings.soundAlertsEnabled && (settings.voiceAlertsEnabled ?? true)
+                  ? 'text-cyan-300 hover:bg-cyan-500/20'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              {settings.soundAlertsEnabled ? (
+                <Volume2 className="w-3.5 h-3.5 text-cyan-400" />
+              ) : (
+                <VolumeX className="w-3.5 h-3.5 text-slate-400" />
+              )}
+              <span className="hidden lg:inline">Voix</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const nextGender = settings.voiceGender === 'MALE' ? 'FEMALE' : 'MALE';
+                soundService.setVoiceGender(nextGender);
+                setSettings((prev) => ({ ...prev, voiceGender: nextGender }));
+                soundService.playTestVoiceAndSound(nextGender);
+              }}
+              title="Basculer entre Voix Féminine et Voix Masculine (et tester)"
+              className={`px-1.5 py-1 text-[10px] font-mono font-bold border-l border-slate-700 transition cursor-pointer ${
+                settings.voiceGender === 'MALE'
+                  ? 'bg-blue-500/20 text-blue-300 hover:bg-blue-500/30'
+                  : 'bg-pink-500/20 text-pink-300 hover:bg-pink-500/30'
+              }`}
+            >
+              {settings.voiceGender === 'MALE' ? 'H' : 'F'}
+            </button>
+          </div>
 
           {/* Connectivité Internet & File de Synchronisation Hors-Ligne */}
           <button
@@ -490,5 +511,166 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
       </div>
     </header>
+  );
+};
+
+interface SidebarNavProps {
+  activeTab: ActiveTab;
+  setActiveTab: (tab: ActiveTab) => void;
+  currentStaffUser: StaffUser | null;
+  waitingCount: number;
+  onSwitchToHorizontal: () => void;
+}
+
+export const SidebarNav: React.FC<SidebarNavProps> = ({
+  activeTab,
+  setActiveTab,
+  currentStaffUser,
+  waitingCount,
+  onSwitchToHorizontal,
+}) => {
+  const role: StaffRole = currentStaffUser?.role || 'CAISSIER';
+  const isGerantOrAdmin = role === 'GERANT' || role === 'ADMIN';
+
+  return (
+    <aside className="w-full md:w-56 lg:w-60 shrink-0 bg-slate-900/95 backdrop-blur-md border-b md:border-b-0 md:border-r border-slate-800 px-3 py-3 md:py-4 flex flex-col justify-between gap-3 md:sticky md:top-[69px] md:h-[calc(100vh-69px)] md:overflow-y-auto z-30">
+      <div className="space-y-2">
+        <div className="flex items-center justify-between px-2 pb-2 border-b border-slate-800/80">
+          <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400">
+            Navigation
+          </span>
+          <button
+            type="button"
+            onClick={onSwitchToHorizontal}
+            title="Remettre le menu en haut (horizontal)"
+            className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-slate-700 transition cursor-pointer"
+          >
+            <PanelTop className="w-3 h-3" />
+            <span>Horizontal</span>
+          </button>
+        </div>
+
+        <nav className="flex md:flex-col gap-1 overflow-x-auto md:overflow-x-visible no-scrollbar">
+          <button
+            onClick={() => setActiveTab('dashboard')}
+            className={`flex items-center gap-2.5 px-3 py-2 text-xs font-semibold rounded-xl transition-colors whitespace-nowrap shrink-0 md:w-full text-left cursor-pointer ${
+              activeTab === 'dashboard'
+                ? 'bg-blue-600 text-white shadow-sm'
+                : 'text-slate-300 hover:text-white hover:bg-slate-800'
+            }`}
+          >
+            <LayoutDashboard className="w-4 h-4 shrink-0" />
+            <span>Tableau de bord</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('stations')}
+            className={`flex items-center gap-2.5 px-3 py-2 text-xs font-semibold rounded-xl transition-colors whitespace-nowrap shrink-0 md:w-full text-left cursor-pointer ${
+              activeTab === 'stations'
+                ? 'bg-blue-600 text-white shadow-sm'
+                : 'text-slate-300 hover:text-white hover:bg-slate-800'
+            }`}
+          >
+            <Tv className="w-4 h-4 shrink-0" />
+            <span>Postes Live</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('tickets')}
+            className={`flex items-center gap-2.5 px-3 py-2 text-xs font-semibold rounded-xl transition-colors whitespace-nowrap shrink-0 md:w-full text-left cursor-pointer ${
+              activeTab === 'tickets'
+                ? 'bg-blue-600 text-white shadow-sm'
+                : 'text-slate-300 hover:text-white hover:bg-slate-800'
+            }`}
+          >
+            <Gamepad2 className="w-4 h-4 shrink-0" />
+            <span>Billetterie</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('queue')}
+            className={`flex items-center justify-between gap-2 px-3 py-2 text-xs font-semibold rounded-xl transition-colors whitespace-nowrap shrink-0 md:w-full text-left cursor-pointer ${
+              activeTab === 'queue'
+                ? 'bg-blue-600 text-white shadow-sm'
+                : 'text-slate-300 hover:text-white hover:bg-slate-800'
+            }`}
+          >
+            <span className="flex items-center gap-2.5">
+              <Users className="w-4 h-4 shrink-0" />
+              <span>File d'attente</span>
+            </span>
+            {waitingCount > 0 && (
+              <span className="px-1.5 py-0.2 bg-amber-500 text-slate-950 font-bold text-[10px] rounded-full">
+                {waitingCount}
+              </span>
+            )}
+          </button>
+
+          <button
+            onClick={() => setActiveTab('loyalty')}
+            className={`flex items-center gap-2.5 px-3 py-2 text-xs font-semibold rounded-xl transition-colors whitespace-nowrap shrink-0 md:w-full text-left cursor-pointer ${
+              activeTab === 'loyalty'
+                ? 'bg-blue-600 text-white shadow-sm'
+                : 'text-slate-300 hover:text-white hover:bg-slate-800'
+            }`}
+          >
+            <Award className="w-4 h-4 shrink-0" />
+            <span>Fidélité & Statuts</span>
+          </button>
+
+          {isGerantOrAdmin && (
+            <button
+              onClick={() => setActiveTab('domotique')}
+              className={`flex items-center gap-2.5 px-3 py-2 text-xs font-semibold rounded-xl transition-colors whitespace-nowrap shrink-0 md:w-full text-left cursor-pointer ${
+                activeTab === 'domotique'
+                  ? 'bg-cyan-600 text-white shadow-sm'
+                  : 'text-slate-300 hover:text-white hover:bg-slate-800'
+              }`}
+            >
+              <Zap className="w-4 h-4 shrink-0" />
+              <span>Domotique IoT</span>
+            </button>
+          )}
+
+          <button
+            onClick={() => setActiveTab('cash')}
+            className={`flex items-center gap-2.5 px-3 py-2 text-xs font-semibold rounded-xl transition-colors whitespace-nowrap shrink-0 md:w-full text-left cursor-pointer ${
+              activeTab === 'cash'
+                ? 'bg-blue-600 text-white shadow-sm'
+                : 'text-slate-300 hover:text-white hover:bg-slate-800'
+            }`}
+          >
+            <ShoppingBag className="w-4 h-4 shrink-0" />
+            <span>Caisse & Snacks</span>
+          </button>
+
+          {isGerantOrAdmin && (
+            <button
+              onClick={() => setActiveTab('reports')}
+              className={`flex items-center gap-2.5 px-3 py-2 text-xs font-semibold rounded-xl transition-colors whitespace-nowrap shrink-0 md:w-full text-left cursor-pointer ${
+                activeTab === 'reports'
+                  ? 'bg-blue-600 text-white shadow-sm'
+                  : 'text-slate-300 hover:text-white hover:bg-slate-800'
+              }`}
+            >
+              <BarChart3 className="w-4 h-4 shrink-0" />
+              <span>Rapports</span>
+            </button>
+          )}
+
+          <button
+            onClick={() => setActiveTab('guide')}
+            className={`flex items-center gap-2.5 px-3 py-2 text-xs font-semibold rounded-xl transition-colors whitespace-nowrap shrink-0 md:w-full text-left cursor-pointer ${
+              activeTab === 'guide'
+                ? 'bg-emerald-600 text-white shadow-sm'
+                : 'text-slate-300 hover:text-white hover:bg-slate-800'
+            }`}
+          >
+            <BookOpen className="w-4 h-4 shrink-0" />
+            <span>Guide & Tests</span>
+          </button>
+        </nav>
+      </div>
+    </aside>
   );
 };

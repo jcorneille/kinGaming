@@ -19,7 +19,7 @@ export const DEFAULT_TIER_RULES: TierRulesConfig = {
       discountPercent: 0,
       queuePriority: 'NORMAL',
       colorBadge: 'bg-slate-700 text-slate-300 border-slate-600',
-      description: 'Joueur nouvellement inscrit à Kin Gaming Hub.',
+      description: 'Joueur nouvellement inscrit à GOZA.',
       otherBenefits: 'Bonus de bienvenue (5 min offertes sur 1re session)',
     },
     REGULIER: {

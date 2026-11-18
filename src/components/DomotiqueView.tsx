@@ -17,6 +17,8 @@ import {
 } from 'lucide-react';
 import { DomotiqueDevice, Station, SystemSettings } from '../types';
 import { mqttGateway, MqttPacketLog } from '../services/mqttService';
+import { isStationShellyExempt } from '../services/shellyService';
+import { getConsoleLabel, isHighTierConsole } from '../services/consoleCatalog';
 
 interface DomotiqueViewProps {
   devices: DomotiqueDevice[];
@@ -194,6 +196,7 @@ export const DomotiqueView: React.FC<DomotiqueViewProps> = ({
               const isON = device.state === 'ON';
               const station = device.stationId ? stations.find(s => s.id === device.stationId) : null;
               const isGaming = station && station.status === 'occupied';
+              const isExempt = device.stationId ? isStationShellyExempt(device.stationId, settings) : false;
 
               return (
                 <div
@@ -206,11 +209,22 @@ export const DomotiqueView: React.FC<DomotiqueViewProps> = ({
                 >
                   <div className="flex items-start justify-between">
                     <div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-1.5">
                         <span className="font-bold text-white text-sm">{device.name}</span>
                         {isGaming && (
                           <span className="px-1.5 py-0.2 bg-blue-500/20 text-blue-300 border border-blue-500/30 text-[9px] font-bold rounded">
                             Partie en cours
+                          </span>
+                        )}
+                        {device.stationId && (
+                          <span
+                            className={`px-1.5 py-0.2 text-[9px] font-mono font-bold rounded border ${
+                              isExempt
+                                ? 'bg-amber-500/15 text-amber-300 border-amber-500/40'
+                                : 'bg-cyan-500/15 text-cyan-300 border-cyan-500/40'
+                            }`}
+                          >
+                            {isExempt ? 'EXEMPTÉ (Manuel)' : 'Shelly Auto Ticket'}
                           </span>
                         )}
                       </div>
@@ -271,20 +285,74 @@ export const DomotiqueView: React.FC<DomotiqueViewProps> = ({
           </div>
 
           <div className="space-y-4">
-            {/* Règle 1 : Allumage auto au ticket */}
-            <div className="flex items-center justify-between p-3.5 bg-slate-800/60 rounded-xl border border-slate-700">
-              <div>
-                <span className="text-sm font-bold text-white block">Allumage automatique à l'ouverture de ticket</span>
-                <span className="text-xs text-slate-400">
-                  Dès qu'un caissier valide un ticket, le relais de la prise console + TV s'enclenche instantanément.
-                </span>
+            {/* Règle 1 : Allumage auto strict au ticket + 2 postes exemptés (1 PS4 + 1 PS5) */}
+            <div className="p-4 bg-slate-800/60 rounded-xl border border-amber-500/30 space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <span className="text-sm font-bold text-white block">
+                    Déclenchement automatique du relais Shelly sur génération de ticket
+                  </span>
+                  <span className="text-xs text-slate-400">
+                    Le courant passe automatiquement uniquement dans le relais Shelly du poste pour lequel le ticket est généré, sauf les 2 postes exemptés ci-dessous (1 PS4 + 1 PS5).
+                  </span>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={settings.autoPowerOnWithTicket}
+                  onChange={(e) => onUpdateSettings({ autoPowerOnWithTicket: e.target.checked })}
+                  className="w-5 h-5 rounded text-cyan-600 focus:ring-0 cursor-pointer shrink-0"
+                />
               </div>
-              <input
-                type="checkbox"
-                checked={settings.autoPowerOnWithTicket}
-                onChange={(e) => onUpdateSettings({ autoPowerOnWithTicket: e.target.checked })}
-                className="w-5 h-5 rounded text-cyan-600 focus:ring-0 cursor-pointer"
-              />
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-3 border-t border-slate-700/70 text-xs">
+                <div>
+                  <label className="text-[11px] font-bold text-amber-300 block mb-1">
+                    1 Poste PS4 Exempté (Contrôle Manuel Uniquement)
+                  </label>
+                  <select
+                    value={settings.shellyExemptPs4StationId ?? ''}
+                    onChange={(e) =>
+                      onUpdateSettings({
+                        shellyExemptPs4StationId: e.target.value ? Number(e.target.value) : null,
+                      })
+                    }
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-2 text-white font-semibold"
+                  >
+                    <option value="">Aucun poste PS4 exempté</option>
+                    {stations
+                      .filter((s) => !isHighTierConsole(s.type))
+                      .map((s) => (
+                        <option key={s.id} value={s.id}>
+                          Poste {s.id} — {getConsoleLabel(s.type)} ({s.name})
+                        </option>
+                      ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-[11px] font-bold text-cyan-300 block mb-1">
+                    1 Poste PS5 Exempté (Contrôle Manuel Uniquement)
+                  </label>
+                  <select
+                    value={settings.shellyExemptPs5StationId ?? ''}
+                    onChange={(e) =>
+                      onUpdateSettings({
+                        shellyExemptPs5StationId: e.target.value ? Number(e.target.value) : null,
+                      })
+                    }
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-2 text-white font-semibold"
+                  >
+                    <option value="">Aucun poste PS5 exempté</option>
+                    {stations
+                      .filter((s) => isHighTierConsole(s.type))
+                      .map((s) => (
+                        <option key={s.id} value={s.id}>
+                          Poste {s.id} — {getConsoleLabel(s.type)} ({s.name})
+                        </option>
+                      ))}
+                  </select>
+                </div>
+              </div>
             </div>
 
             {/* Règle 2 : Coupure auto fin de temps */}

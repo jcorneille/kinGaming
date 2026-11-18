@@ -38,7 +38,7 @@ export const OFFICIAL_TEMPLATES: Record<string, WhatsAppTemplate> = {
     language: 'fr',
     status: 'APPROVED',
     description: 'Notification de passage au statut Fidèle ou VIP avec avantages exclusifs.',
-    bodyText: 'Félicitations {{1}} ! Vous venez de passer au statut {{2}} chez Kin Gaming Hub. Profitez dès maintenant de vos avantages exclusifs.',
+    bodyText: 'Félicitations {{1}} ! Vous venez de passer au statut {{2}} chez GOZA. Profitez dès maintenant de vos avantages exclusifs.',
     exampleVariables: ['Junior', 'Fidèle (-5% et priorité)'],
   },
   hello_world: {
@@ -50,12 +50,58 @@ export const OFFICIAL_TEMPLATES: Record<string, WhatsAppTemplate> = {
     bodyText: 'Welcome and congratulations!! This message demonstrates your ability to send a WhatsApp message notification from the Cloud API.',
     exampleVariables: [],
   },
+  bienvenue_goza: {
+    name: 'bienvenue_goza',
+    category: 'UTILITY',
+    language: 'fr',
+    status: 'APPROVED',
+    description: "Message de bienvenue envoyé lors de la première inscription d'un client avec ses avantages et coordonnées Espace Client.",
+    bodyText:
+      'Bienvenue chez GOZA, {{1}} ! Code Client: {{2}} | Code Parrain: {{3}} | Espace Client: {{4}} | Code PIN: {{5}}.',
+    exampleVariables: ['Corneille', 'KIN-4821', 'CO243', 'https://goza.cd/?tab=client', '1234'],
+  },
 };
 
 /**
- * Vérifie si la configuration WhatsApp contient de vrais identifiants Meta Graph API
+ * Construit le message de bienvenue WhatsApp complet avec explication des avantages et coordonnées Espace Client.
+ */
+export function buildClientWelcomeMessage(params: {
+  fullName: string;
+  clientCode: string;
+  referralCode: string;
+  pin: string;
+  portalUrl: string;
+}): string {
+  const firstName = (params.fullName || 'Joueur').trim().split(' ')[0];
+  return [
+    `Bienvenue dans la salle de jeux GOZA, ${firstName} !`,
+    ``,
+    `Votre inscription est confirmée (+20 points de bienvenue offerts).`,
+    ``,
+    `Vos avantages GOZA :`,
+    `- Gagnez des points à chaque session (convertibles en minutes de jeu gratuites PS4 & PS5).`,
+    `- Montez de rang (Régulier -> Fidèle -5% & priorité file -> VIP -10% & priorité maximale).`,
+    `- Parrainez vos amis avec votre code parrain : gagnez 50 pts dès leur inscription + 10% des points de toutes leurs parties !`,
+    ``,
+    `Vos coordonnées Espace Client :`,
+    `- Code Client : ${params.clientCode}`,
+    `- Code Parrain : ${params.referralCode}`,
+    `- Lien Espace Client : ${params.portalUrl}`,
+    `- Code PIN : ${params.pin} (modifiable dès votre 1ère connexion)`,
+  ].join('\n');
+}
+
+/**
+ * Vérifie si la configuration WhatsApp contient un fournisseur réel (Meta Cloud, CallMeBot ou Webhook)
  */
 export function hasRealMetaCredentials(config: WhatsAppConfig): boolean {
+  const provider = config.provider || 'META_CLOUD';
+  if (provider === 'CALLMEBOT') {
+    return Boolean((config.callmebotApiKey || '').trim());
+  }
+  if (provider === 'CUSTOM_WEBHOOK') {
+    return Boolean((config.customWebhookUrl || '').trim());
+  }
   const token = (config.accessToken || '').trim();
   const phoneId = (config.phoneNumberId || '').trim();
   if (!token || !phoneId) return false;
@@ -102,13 +148,15 @@ export function normalizeE164(phone: string): { e164: string; isValid: boolean; 
 }
 
 /**
- * Construit un lien direct WhatsApp (https://wa.me/...) utilisable sans API payante / compte Meta Developer
+ * Construit un lien direct WhatsApp (https://api.whatsapp.com/send...) compatible Web & Mobile sans API Meta
  */
 export function buildWaMeUrl(phone: string, text: string): string {
   const norm = normalizeE164(phone);
   const digits = (norm.e164 || phone).replace(/[^0-9]/g, '');
   const encoded = encodeURIComponent(text || '');
-  return digits ? `https://wa.me/${digits}?text=${encoded}` : `https://wa.me/?text=${encoded}`;
+  return digits
+    ? `https://api.whatsapp.com/send?phone=${digits}&text=${encoded}`
+    : `https://api.whatsapp.com/send?text=${encoded}`;
 }
 
 /**
@@ -178,6 +226,7 @@ export class WhatsAppCloudProvider {
 
     const tmpl = OFFICIAL_TEMPLATES[templateName];
     const resolvedLanguage = options?.languageCode || tmpl?.language || (templateName === 'hello_world' ? 'en_US' : 'fr');
+    const renderedText = options?.customText || renderTemplateText(templateName, variables) || `GOZA (${templateName})`;
 
     try {
       const response = await fetch('/api/whatsapp/send', {
@@ -190,11 +239,16 @@ export class WhatsAppCloudProvider {
           languageCode: resolvedLanguage,
           messageType: options?.messageType || 'template',
           customText: options?.customText,
+          renderedText,
           configOverride: {
+            provider: config.provider || 'META_CLOUD',
             phoneNumberId: config.phoneNumberId,
             accessToken: config.accessToken,
             apiVersion: config.apiVersion,
             isTestMode: config.isTestMode,
+            callmebotApiKey: config.callmebotApiKey,
+            customWebhookUrl: config.customWebhookUrl,
+            customWebhookToken: config.customWebhookToken,
           },
         }),
       });
@@ -254,9 +308,14 @@ export class NotificationService {
     variables: Record<string, string>,
     config: WhatsAppConfig,
     clientId?: string,
-    onLogUpdate?: (log: NotificationLog) => void
+    onLogUpdate?: (log: NotificationLog) => void,
+    options?: {
+      messageType?: 'template' | 'text';
+      customText?: string;
+      languageCode?: string;
+    }
   ): Promise<NotificationLog & { sendMode?: 'LIVE_META' | 'SIMULATION' }> {
-    const renderedMessage = renderTemplateText(templateName, variables);
+    const renderedMessage = options?.customText || renderTemplateText(templateName, variables);
     const { e164 } = normalizeE164(toPhone);
 
     const log: NotificationLog & { sendMode?: 'LIVE_META' | 'SIMULATION' } = {
@@ -282,7 +341,7 @@ export class NotificationService {
       attempts++;
       log.retryCount = attempts;
 
-      const result = await WhatsAppCloudProvider.sendTemplate(toPhone, templateName, variables, config);
+      const result = await WhatsAppCloudProvider.sendTemplate(toPhone, templateName, variables, config, options);
 
       if (result.success) {
         log.status = result.status;

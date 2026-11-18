@@ -4,8 +4,34 @@ import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
+import { GoogleGenAI } from '@google/genai';
 
 dotenv.config();
+
+const geminiApiKey = process.env.GEMINI_API_KEY || '';
+const aiClient = geminiApiKey
+  ? new GoogleGenAI({
+      apiKey: geminiApiKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        },
+      },
+    })
+  : null;
+const aiClientAlpha = geminiApiKey
+  ? new GoogleGenAI({
+      apiKey: geminiApiKey,
+      apiVersion: 'v1alpha',
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        },
+      },
+    })
+  : null;
+
+const ttsMemoryCache = new Map<string, { audioBase64: string; mimeType: string; voiceName: string; createdAt: number }>();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -673,26 +699,232 @@ app.get('/api/whatsapp/webhook-events', (req, res) => {
 });
 
 /**
- * 3. Envoi de notification WhatsApp via Meta Graph API (POST /api/whatsapp/send)
+ * 3. Synthèse Vocale Humaine via Gemini TTS (POST /api/tts/speak)
+ * Voix féminine naturelle ('Kore') ou masculine naturelle ('Charon') avec cache mémoire LRU
+ */
+app.post('/api/tts/speak', async (req, res) => {
+  try {
+    const text = String(req.body?.text || '').trim();
+    const gender: 'FEMALE' | 'MALE' = req.body?.gender === 'MALE' ? 'MALE' : 'FEMALE';
+
+    if (!text || text.length > 500) {
+      return res.status(400).json({ success: false, error: 'Texte invalide ou trop long.' });
+    }
+
+    if (!aiClient) {
+      return res.status(503).json({
+        success: false,
+        fallback: true,
+        error: 'GEMINI_API_KEY absente côté serveur — bascule sur la voix locale du navigateur.',
+      });
+    }
+
+    const voiceName = gender === 'MALE' ? 'Charon' : 'Kore';
+    const cacheKey = `${gender}:${text}`;
+    const cached = ttsMemoryCache.get(cacheKey);
+    if (cached) {
+      return res.status(200).json({
+        success: true,
+        audioBase64: cached.audioBase64,
+        mimeType: cached.mimeType,
+        voiceName: cached.voiceName,
+        provider: 'GEMINI_TTS_CACHED',
+      });
+    }
+
+    const attempts: Array<() => Promise<any>> = [
+      // 1. Gemini 3.8 Flash Lite TTS via v1alpha (voix humaine directe)
+      () =>
+        (aiClientAlpha || aiClient).models.generateContent({
+          model: 'gemini-3.8-flash-lite-tts',
+          contents: [
+            {
+              role: 'user',
+              parts: [
+                {
+                  text: `${
+                    gender === 'MALE'
+                      ? 'Lis en français d’une voix masculine naturelle, posée et chaleureuse'
+                      : 'Lis en français d’une voix féminine naturelle, douce et chaleureuse'
+                  } : ${text}`,
+                },
+              ],
+            },
+          ],
+          config: {
+            responseModalities: ['AUDIO'],
+            speechConfig: {
+              voiceConfig: { prebuiltVoiceConfig: { voiceName } },
+            },
+          },
+        }),
+      // 2. Fallback Gemini 3.8 Flash TTS via v1alpha
+      () =>
+        (aiClientAlpha || aiClient).models.generateContent({
+          model: 'gemini-3.8-flash-tts',
+          contents: [{ role: 'user', parts: [{ text }] }],
+          config: {
+            responseModalities: ['AUDIO'],
+            speechConfig: {
+              voiceConfig: { prebuiltVoiceConfig: { voiceName } },
+            },
+          },
+        }),
+    ];
+
+    let audioBase64: string | undefined;
+    let audioMime = 'audio/wav';
+    let lastErr: any = null;
+
+    for (const runAttempt of attempts) {
+      try {
+        const response = await runAttempt();
+        const part = response?.candidates?.[0]?.content?.parts?.[0]?.inlineData;
+        if (part?.data) {
+          audioBase64 = part.data;
+          audioMime = part.mimeType || 'audio/wav';
+          break;
+        }
+      } catch (err: any) {
+        lastErr = err;
+      }
+    }
+
+    if (!audioBase64) {
+      console.warn('[Gemini TTS Fallback]:', lastErr?.message || lastErr);
+      return res.status(503).json({
+        success: false,
+        fallback: true,
+        error: lastErr?.message || 'Aucun flux audio généré par Gemini TTS.',
+      });
+    }
+
+    if (ttsMemoryCache.size >= 100) {
+      const firstKey = ttsMemoryCache.keys().next().value;
+      if (firstKey) ttsMemoryCache.delete(firstKey);
+    }
+    ttsMemoryCache.set(cacheKey, { audioBase64, mimeType: audioMime, voiceName, createdAt: Date.now() });
+
+    return res.status(200).json({
+      success: true,
+      audioBase64,
+      mimeType: audioMime,
+      voiceName,
+      provider: 'GEMINI_TTS',
+    });
+  } catch (error: any) {
+    console.warn('[Gemini TTS Fallback]:', error?.message || error);
+    return res.status(503).json({
+      success: false,
+      fallback: true,
+      error: error?.message || 'Erreur synthèse vocale Gemini TTS',
+    });
+  }
+});
+
+/**
+ * 4. Envoi de notification WhatsApp (Meta Cloud API / CallMeBot / Webhook HTTP)
  */
 app.post('/api/whatsapp/send', async (req, res) => {
   try {
-    const { to, templateName, variables, languageCode, messageType, customText, configOverride } = req.body;
+    const { to, templateName, variables, languageCode, messageType, customText, renderedText, configOverride } = req.body;
 
+    const provider = configOverride?.provider || 'META_CLOUD';
     const phoneNumberId = String(configOverride?.phoneNumberId || WHATSAPP_PHONE_NUMBER_ID || '').trim();
     const accessToken = String(configOverride?.accessToken || WHATSAPP_ACCESS_TOKEN || '').trim();
     const apiVersion = String(configOverride?.apiVersion || WHATSAPP_API_VERSION || 'v21.0').trim();
     const isTestMode = Boolean(configOverride?.isTestMode);
+    const callmebotApiKey = String(configOverride?.callmebotApiKey || '').trim();
+    const customWebhookUrl = String(configOverride?.customWebhookUrl || '').trim();
+    const customWebhookToken = String(configOverride?.customWebhookToken || '').trim();
 
+    const cleanRecipient = String(to || '').replace(/[^0-9]/g, '');
+    if (!cleanRecipient || cleanRecipient.length < 8) {
+      return res.status(400).json({
+        success: false,
+        error: `Numéro destinataire invalide: "${to}". Utilisez le format E.164 (ex: +243895457097).`,
+      });
+    }
+
+    const messageText = String(customText || renderedText || `GOZA (${templateName})`).trim();
+
+    // Option B : Passerelle gratuite CallMeBot WhatsApp API
+    if (provider === 'CALLMEBOT') {
+      if (!callmebotApiKey) {
+        return res.status(200).json({
+          success: true,
+          mode: 'SIMULATION',
+          messageId: `wamid.sim_${Date.now()}`,
+          reason: 'Clé API CallMeBot manquante — simulation locale.',
+        });
+      }
+      const cbUrl = `https://api.callmebot.com/whatsapp.php?phone=${encodeURIComponent(cleanRecipient)}&text=${encodeURIComponent(messageText)}&apikey=${encodeURIComponent(callmebotApiKey)}`;
+      const cbRes = await fetch(cbUrl);
+      const cbBody = await cbRes.text();
+      if (!cbRes.ok || cbBody.toLowerCase().includes('error')) {
+        return res.status(502).json({
+          success: false,
+          error: `CallMeBot erreur: ${cbBody.slice(0, 180)}`,
+        });
+      }
+      return res.status(200).json({
+        success: true,
+        mode: 'LIVE_META',
+        messageId: `callmebot_${Date.now()}`,
+        provider: 'CALLMEBOT',
+      });
+    }
+
+    // Option C : Webhook HTTP personnalisé (UltraMsg / Green-API / Evolution API / Zapier)
+    if (provider === 'CUSTOM_WEBHOOK') {
+      if (!customWebhookUrl) {
+        return res.status(200).json({
+          success: true,
+          mode: 'SIMULATION',
+          messageId: `wamid.sim_${Date.now()}`,
+          reason: 'URL Webhook personnalisée manquante — simulation locale.',
+        });
+      }
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (customWebhookToken) {
+        headers['Authorization'] = `Bearer ${customWebhookToken}`;
+      }
+      const whRes = await fetch(customWebhookUrl, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          to: `+${cleanRecipient}`,
+          phone: cleanRecipient,
+          text: messageText,
+          body: messageText,
+          templateName,
+          variables,
+        }),
+      });
+      if (!whRes.ok) {
+        const whErr = await whRes.text().catch(() => '');
+        return res.status(whRes.status).json({
+          success: false,
+          error: `Webhook HTTP ${whRes.status}: ${whErr.slice(0, 180)}`,
+        });
+      }
+      return res.status(200).json({
+        success: true,
+        mode: 'LIVE_META',
+        messageId: `wh_${Date.now()}`,
+        provider: 'CUSTOM_WEBHOOK',
+      });
+    }
+
+    // Option A : Meta WhatsApp Business Cloud API
     const isPlaceholderToken =
       !accessToken ||
       accessToken === 'EAAG...' ||
       accessToken === 'EAA...' ||
       accessToken.length < 25 ||
       accessToken.includes('xxxx');
-    const isMissingPhoneId = !phoneNumberId || phoneNumberId === '109876543210987' && isPlaceholderToken;
+    const isMissingPhoneId = !phoneNumberId || (phoneNumberId === '109876543210987' && isPlaceholderToken);
 
-    // Simulation contrôlée uniquement si aucun vrai jeton / Phone ID Meta n'est fourni
     if (isPlaceholderToken || isMissingPhoneId || !phoneNumberId) {
       console.log(
         `[WhatsApp Simulator] Jeton Meta non configuré — message simulé vers ${to} (${messageType === 'text' ? 'texte libre' : templateName})`
@@ -702,14 +934,6 @@ app.post('/api/whatsapp/send', async (req, res) => {
         messageId: `wamid.sim_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
         mode: 'SIMULATION',
         reason: 'Aucun jeton Meta Graph API valide configuré (simulation locale).',
-      });
-    }
-
-    const cleanRecipient = String(to || '').replace(/[^0-9]/g, '');
-    if (!cleanRecipient || cleanRecipient.length < 8) {
-      return res.status(400).json({
-        success: false,
-        error: `Numéro destinataire invalide: "${to}". Utilisez le format E.164 (ex: +243895457097).`,
       });
     }
 
@@ -774,11 +998,17 @@ app.post('/api/whatsapp/send', async (req, res) => {
 
     if (!metaRes.ok) {
       console.error('[Meta Graph API Error]:', metaData);
-      const userMsg = metaData?.error?.error_user_msg || metaData?.error?.message || `Meta API HTTP ${metaRes.status}`;
+      const code = metaData?.error?.code;
+      let userMsg = metaData?.error?.error_user_msg || metaData?.error?.message || `Meta API HTTP ${metaRes.status}`;
+      if (code === 190 || metaRes.status === 401) {
+        userMsg = `Jeton Meta WhatsApp expiré ou invalide (Erreur 190). Les jetons temporaires Meta expirent toutes les 24h : générez un nouveau jeton dans Meta Developers, ou choisissez "CallMeBot Gratuit" / le lien direct WhatsApp.`;
+      } else if (code === 132001 || code === 132000) {
+        userMsg = `Modèle "${templateName}" non trouvé/approuvé dans votre compte Meta (${userMsg}). Pour un premier test immédiat, choisissez "hello_world (en_US)" ou créez ce modèle dans Meta Business Manager.`;
+      }
       return res.status(metaRes.status).json({
         success: false,
         error: userMsg,
-        errorCode: metaData?.error?.code,
+        errorCode: code,
         details: metaData,
       });
     }
@@ -814,7 +1044,7 @@ app.post('/api/payments/illico/webhook', (req, res) => {
     reference,
     reconciled: true,
     timestamp: Date.now(),
-    message: 'Transaction Illico Cash acquittée avec succès par le serveur de caisse Kin Gaming Hub',
+    message: 'Transaction Illico Cash acquittée avec succès par le serveur de caisse GOZA',
   });
 });
 
@@ -826,6 +1056,82 @@ app.get('/api/payments/illico/status/:reference', (req, res) => {
     status: 'CONFIRMED',
     provider: 'ILLICO_CASH_RAWBANK',
     confirmedAt: Date.now(),
+  });
+});
+
+/**
+ * 4b. Passerelle Domotique Shelly HTTP (Gen1 / Gen2 Plus)
+ * Permet d'envoyer l'ordre réel ON/OFF vers l'adresse IP LAN d'un relais Shelly 1PM / Plus 1PM
+ * tout en retombant proprement en mode MQTT simulé lorsque la salle n'est pas sur le même réseau local.
+ */
+app.post('/api/shelly/trigger', async (req, res) => {
+  const { stationId, state, ipAddress, hardwareType, reason } = req.body || {};
+  const normalizedState = String(state || '').toUpperCase() === 'ON' ? 'ON' : 'OFF';
+  const cleanIp = String(ipAddress || '').trim();
+
+  if (!cleanIp || !/^(\d{1,3}\.){3}\d{1,3}$/.test(cleanIp)) {
+    return res.status(200).json({
+      success: true,
+      delivered: false,
+      mode: 'MQTT_SIMULATED',
+      stationId,
+      state: normalizedState,
+      reason: 'Adresse IP locale non fournie ou invalide',
+    });
+  }
+
+  const turnStr = normalizedState === 'ON' ? 'on' : 'off';
+  const isOnBool = normalizedState === 'ON';
+
+  const tryHttp = async (url: string, protocol: string): Promise<{ ok: boolean; protocol?: string }> => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 1400);
+    try {
+      const r = await fetch(url, { method: 'GET', signal: controller.signal });
+      clearTimeout(timer);
+      if (r.ok) return { ok: true, protocol };
+      return { ok: false };
+    } catch {
+      clearTimeout(timer);
+      return { ok: false };
+    }
+  };
+
+  // Gen1 (/relay/0?turn=on|off) puis Gen2 Plus (/rpc/Switch.Set?id=0&on=true|false)
+  const gen1 = await tryHttp(`http://${cleanIp}/relay/0?turn=${turnStr}`, 'SHELLY_GEN1');
+  if (gen1.ok) {
+    console.log(`[Shelly HTTP] Poste ${stationId} (${cleanIp}) -> ${normalizedState} via Gen1 (${reason || 'AUTO'})`);
+    return res.status(200).json({
+      success: true,
+      delivered: true,
+      mode: 'SHELLY_HTTP',
+      protocol: 'SHELLY_GEN1',
+      stationId,
+      state: normalizedState,
+    });
+  }
+
+  const gen2 = await tryHttp(`http://${cleanIp}/rpc/Switch.Set?id=0&on=${isOnBool}`, 'SHELLY_GEN2_RPC');
+  if (gen2.ok) {
+    console.log(`[Shelly HTTP] Poste ${stationId} (${cleanIp}) -> ${normalizedState} via Gen2 RPC (${reason || 'AUTO'})`);
+    return res.status(200).json({
+      success: true,
+      delivered: true,
+      mode: 'SHELLY_HTTP',
+      protocol: 'SHELLY_GEN2_RPC',
+      stationId,
+      state: normalizedState,
+    });
+  }
+
+  return res.status(200).json({
+    success: true,
+    delivered: false,
+    mode: 'MQTT_SIMULATED',
+    hardwareType: hardwareType || 'SHELLY_1PM',
+    stationId,
+    state: normalizedState,
+    note: `Relais ${cleanIp} non joignable depuis ce serveur (commandé via passerelle MQTT locale).`,
   });
 });
 
@@ -906,7 +1212,7 @@ async function startServer() {
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Kin Gaming Hub server running on http://localhost:${PORT}`);
+    console.log(`GOZA server running on http://localhost:${PORT}`);
   });
 }
 

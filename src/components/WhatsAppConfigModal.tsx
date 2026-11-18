@@ -64,7 +64,7 @@ export const WhatsAppConfigModal: React.FC<WhatsAppConfigModalProps> = ({
     '4': '3',
   });
   const [customTestText, setCustomTestText] = useState(
-    'Bonjour ! Test de notification Kin Gaming Hub : votre poste PS5 est prêt.'
+    'Bonjour ! Test de notification GOZA : votre poste PS5 est prêt.'
   );
   const [isSendingTest, setIsSendingTest] = useState(false);
   const [testResult, setTestResult] = useState<{
@@ -123,10 +123,13 @@ export const WhatsAppConfigModal: React.FC<WhatsAppConfigModalProps> = ({
       return;
     }
 
-    // Sauvegarder automatiquement si des identifiants Meta ont été modifiés dans l'onglet Configuration
+    // Sauvegarder automatiquement si des identifiants ont été modifiés dans l'onglet Configuration
     if (
+      formData.provider !== config.provider ||
       formData.accessToken !== config.accessToken ||
       formData.phoneNumberId !== config.phoneNumberId ||
+      formData.callmebotApiKey !== config.callmebotApiKey ||
+      formData.customWebhookUrl !== config.customWebhookUrl ||
       formData.isTestMode !== config.isTestMode ||
       formData.testPhoneNumber !== config.testPhoneNumber
     ) {
@@ -304,12 +307,58 @@ export const WhatsAppConfigModal: React.FC<WhatsAppConfigModalProps> = ({
           {/* TAB 1: SETTINGS */}
           {activeTab === 'settings' && (
             <form onSubmit={handleSave} className="space-y-6">
+              {/* Sélecteur de passerelle d'envoi réel */}
+              <div className="bg-slate-800/50 border border-slate-700/70 rounded-xl p-4 space-y-3">
+                <div>
+                  <h3 className="font-semibold text-white text-sm">Passerelle d'Envoi Automatique WhatsApp</h3>
+                  <p className="text-xs text-slate-400">
+                    Choisissez comment GOZA envoie les messages WhatsApp automatiques.
+                  </p>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-xs">
+                  {(
+                    [
+                      {
+                        id: 'META_CLOUD',
+                        title: 'Meta Cloud API (Officiel)',
+                        desc: 'API WhatsApp Business v21.0',
+                      },
+                      {
+                        id: 'CALLMEBOT',
+                        title: 'CallMeBot (Gratuit & Rapide)',
+                        desc: 'Sans compte Meta Business',
+                      },
+                      {
+                        id: 'CUSTOM_WEBHOOK',
+                        title: 'Webhook HTTP / UltraMsg',
+                        desc: 'Green-API / Evolution API',
+                      },
+                    ] as const
+                  ).map((prov) => (
+                    <button
+                      key={prov.id}
+                      type="button"
+                      onClick={() => setFormData({ ...formData, provider: prov.id })}
+                      className={`p-3 rounded-xl border text-left transition cursor-pointer ${
+                        (formData.provider || 'META_CLOUD') === prov.id
+                          ? 'bg-emerald-500/15 border-emerald-500 text-white'
+                          : 'bg-slate-900/70 border-slate-700 text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      <div className="font-bold text-xs">{prov.title}</div>
+                      <div className="text-[11px] opacity-80 mt-0.5">{prov.desc}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Mode Test & Numéro Sandbox */}
               <div className="bg-slate-800/40 border border-slate-700/60 rounded-xl p-4 space-y-4">
                 <div className="flex items-center justify-between pb-3 border-b border-slate-700/50">
                   <div>
                     <h3 className="font-semibold text-white text-sm">Mode Test & Environnement</h3>
                     <p className="text-xs text-slate-400">
-                      En mode test, les messages sont routés uniquement vers votre numéro de test vérifié Meta.
+                      En mode test, les messages sont routés uniquement vers votre numéro de test vérifié.
                     </p>
                   </div>
                   <label className="relative inline-flex items-center cursor-pointer">
@@ -326,23 +375,81 @@ export const WhatsAppConfigModal: React.FC<WhatsAppConfigModalProps> = ({
                 {formData.isTestMode && (
                   <div>
                     <label className="block text-xs font-semibold text-amber-300 uppercase tracking-wider mb-1">
-                      Numéro de Test Autorisé Meta (E.164)
+                      Numéro de Test Autorisé (E.164)
                     </label>
                     <input
                       type="text"
                       value={formData.testPhoneNumber}
                       onChange={(e) => setFormData({ ...formData, testPhoneNumber: e.target.value })}
-                      placeholder="+243 81 234 5678"
+                      placeholder="+243 89 545 7097"
                       className="w-full bg-slate-900 border border-amber-500/40 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-amber-400"
                     />
                     <p className="text-xs text-slate-400 mt-1">
-                      Numéro enregistré dans la section "To" du tableau de bord Meta App pour vos tests sandbox.
+                      Numéro vérifié pour recevoir vos tests en mode Bac à Sable.
                     </p>
                   </div>
                 )}
               </div>
 
+              {(formData.provider || 'META_CLOUD') === 'CALLMEBOT' && (
+                <div className="bg-emerald-950/30 border border-emerald-500/40 rounded-xl p-4 space-y-3 text-xs">
+                  <div className="font-bold text-emerald-300 text-sm">
+                    Configuration CallMeBot (Envoi WhatsApp réel gratuit en 30 secondes)
+                  </div>
+                  <ol className="list-decimal list-inside space-y-1 text-slate-300">
+                    <li>Enregistrez le contact <span className="font-mono text-white font-bold">+34 644 71 98 38</span> dans votre téléphone.</li>
+                    <li>Envoyez-lui sur WhatsApp le message exact : <code className="bg-slate-900 px-1.5 py-0.5 rounded text-emerald-300">I allow callmebot to send me messages</code></li>
+                    <li>Collez ci-dessous la clé <strong>apikey</strong> reçue en réponse :</li>
+                  </ol>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1">
+                      CallMeBot API Key
+                    </label>
+                    <input
+                      type="text"
+                      value={formData.callmebotApiKey || ''}
+                      onChange={(e) => setFormData({ ...formData, callmebotApiKey: e.target.value })}
+                      placeholder="ex. 1234567"
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-emerald-500"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {(formData.provider || 'META_CLOUD') === 'CUSTOM_WEBHOOK' && (
+                <div className="bg-slate-800/40 border border-slate-700 rounded-xl p-4 space-y-3 text-xs">
+                  <div className="font-bold text-cyan-300 text-sm">
+                    Passerelle HTTP Personnalisée (UltraMsg, Green-API, Evolution API, Zapier…)
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1">
+                      URL Endpoint POST (Webhook d'envoi)
+                    </label>
+                    <input
+                      type="url"
+                      value={formData.customWebhookUrl || ''}
+                      onChange={(e) => setFormData({ ...formData, customWebhookUrl: e.target.value })}
+                      placeholder="https://api.ultramsg.com/instanceXXXX/messages/chat"
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-cyan-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1">
+                      Jeton Bearer / Token (Optionnel)
+                    </label>
+                    <input
+                      type="password"
+                      value={formData.customWebhookToken || ''}
+                      onChange={(e) => setFormData({ ...formData, customWebhookToken: e.target.value })}
+                      placeholder="Token d'autorisation..."
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-cyan-500"
+                    />
+                  </div>
+                </div>
+              )}
+
               {/* Meta Credentials */}
+              {(formData.provider || 'META_CLOUD') === 'META_CLOUD' && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1 flex items-center gap-1.5">
@@ -440,6 +547,7 @@ export const WhatsAppConfigModal: React.FC<WhatsAppConfigModalProps> = ({
                   </p>
                 </div>
               </div>
+              )}
 
               {/* Automatic Triggers */}
               <div className="bg-slate-800/40 border border-slate-700/60 rounded-xl p-4 space-y-3">

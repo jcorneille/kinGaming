@@ -475,6 +475,7 @@ export interface SystemSettings {
   warningBeforeCutMinutes: number; // sound chime X minutes before end
   soundAlertsEnabled: boolean;
   voiceAlertsEnabled?: boolean; // alertes parlantes (synthèse vocale FR)
+  voiceGender?: 'FEMALE' | 'MALE'; // choix voix féminine ou masculine humaine
   mqttBrokerHost: string;
   mqttBrokerPort: number;
   mqttUsername: string;
@@ -484,6 +485,8 @@ export interface SystemSettings {
   autoPowerOffAtSessionEnd: boolean;
   autoReleaseGraceSeconds: number; // Délai de grâce avant coupure domotique (défaut: 120s = 2 min)
   autoCutTarget: 'SCREEN_ONLY' | 'SCREEN_AND_CONSOLE'; // Couper écran seulement ou écran + console
+  shellyExemptPs4StationId?: number | null; // 1 poste PS4 exempté du déclenchement Shelly automatique sur ticket
+  shellyExemptPs5StationId?: number | null; // 1 poste PS5 exempté du déclenchement Shelly automatique sur ticket
   lightingACSchedule: LightingACSchedule;
 
   // Section 9: Salle et tickets
@@ -498,7 +501,7 @@ export interface SystemSettings {
   receiptPaperSize: '58mm' | '80mm';
   ticketPrefix: string;
   ticketNumberFormat: 'DAILY_RESET' | 'CONTINUOUS';
-  publicVerificationBaseUrl: string; // Ex: https://kingaminghub.cd ou URL Cloud Run
+  publicVerificationBaseUrl: string; // Ex: https://goza.cd ou URL Cloud Run
   qrCodeFallbackMode: 'URL' | 'OFFLINE_TEXT'; // Bascule si pas de domaine public
   operatingHours: { open: string; close: string };
   timezone: string;
@@ -554,7 +557,10 @@ export interface NotificationLog {
   }>;
 }
 
+export type WhatsAppProviderType = 'META_CLOUD' | 'CALLMEBOT' | 'CUSTOM_WEBHOOK';
+
 export interface WhatsAppConfig {
+  provider?: WhatsAppProviderType;
   phoneNumberId: string;
   businessAccountId: string;
   accessToken: string;
@@ -562,6 +568,9 @@ export interface WhatsAppConfig {
   verifyToken: string;
   isTestMode: boolean;
   testPhoneNumber: string;
+  callmebotApiKey?: string;
+  customWebhookUrl?: string;
+  customWebhookToken?: string;
   optInRequired: boolean;
   autoNotifyQueueTurn: boolean;
   autoNotifyQueueApproaching: boolean;

@@ -4,9 +4,9 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Header, ActiveTab } from './components/Header';
+import { Header, SidebarNav, ActiveTab, NavLayoutMode } from './components/Header';
 import { StationCard } from './components/StationCard';
-import { FastTicketModal } from './components/FastTicketModal';
+import { FastTicketModal, NewClientTicketRegistration } from './components/FastTicketModal';
 import { ThermalReceiptModal } from './components/ThermalReceiptModal';
 import { TicketsView } from './components/TicketsView';
 import { QueueView } from './components/QueueView';
@@ -26,7 +26,13 @@ import { LoginLandingView } from './components/LoginLandingView';
 import { MyProfileModal } from './components/MyProfileModal';
 import { FirstLoginPasswordModal } from './components/FirstLoginPasswordModal';
 import { SnackReceiptModal } from './components/SnackReceiptModal';
-import { NotificationService, normalizeE164, buildWaMeUrl, renderTemplateText } from './services/whatsappService';
+import {
+  NotificationService,
+  normalizeE164,
+  buildWaMeUrl,
+  renderTemplateText,
+  buildClientWelcomeMessage,
+} from './services/whatsappService';
 import { WhatsAppConfig, NotificationLog } from './types';
 
 import {
@@ -61,7 +67,10 @@ import {
 } from './services/storage';
 import { soundService } from './services/soundService';
 import { mqttGateway } from './services/mqttService';
+import { isStationShellyExempt, dispatchStationShellyCommand } from './services/shellyService';
 import { evaluateClientTier, getISOWeekKey } from './services/tierEngine';
+import { GozaWordmark } from './components/GozaWordmark';
+import { DashboardView } from './components/DashboardView';
 import {
   getOfflineQueue,
   syncTicketToServer,
@@ -70,6 +79,13 @@ import {
 } from './services/offlineSync';
 import { isTimeWithinSlot } from './services/pricingEngine';
 import { getConsoleWatts, isHighTierConsole } from './services/consoleCatalog';
+import {
+  MINIMUM_REGISTRATION_TICKET_MINUTES,
+  generateUniqueReferralCode,
+  isValidReferralCodeFormat,
+  findQualifying3HTicket,
+  phonesMatch,
+} from './services/referralCode';
 import {
   Users,
   Tv,
@@ -105,8 +121,22 @@ export default function App() {
       }
     }
     const saved = loadAppState();
-    return saved.isStaffAuthenticated ? 'stations' : 'login';
+    return saved.isStaffAuthenticated ? 'dashboard' : 'login';
   });
+
+  const [navLayout, setNavLayout] = useState<NavLayoutMode>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = window.localStorage.getItem('goza_nav_layout_mode');
+      if (saved === 'sidebar' || saved === 'horizontal') return saved;
+    }
+    return 'horizontal';
+  });
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem('goza_nav_layout_mode', navLayout);
+    }
+  }, [navLayout]);
 
   // Routage direct pour QR Code & Espace Client (Modifications 2 & 3)
   const [verificationToken, setVerificationToken] = useState<string | null>(() => {
@@ -157,6 +187,15 @@ export default function App() {
 
   // Alerte visuelle caissier (ex: échec d'envoi WhatsApp) & Toast envoi WhatsApp direct
   const [cashierAlertBanner, setCashierAlertBanner] = useState<string | null>(null);
+  const [systemToast, setSystemToast] = useState<{ type: 'success' | 'info' | 'warning'; message: string } | null>(null);
+  const [confirmModal, setConfirmModal] = useState<{
+    title: string;
+    message: string;
+    details?: string;
+    confirmLabel: string;
+    danger?: boolean;
+    onConfirm: () => void;
+  } | null>(null);
   const [whatsappToast, setWhatsappToast] = useState<{
     status: 'sending' | 'live' | 'simulation' | 'error';
     message: string;
@@ -177,6 +216,8 @@ export default function App() {
   const lastWebhookPollRef = useRef<number>(Date.now() - 86400000);
   const processedWebhookEventIdsRef = useRef<Set<string>>(new Set());
   const spokenAlertDedupRef = useRef<Set<string>>(new Set());
+  const approachingNotifiedRef = useRef<Set<string>>(new Set());
+  const graceNotifiedRef = useRef<Set<string>>(new Set());
   const ticketsRef = useRef<Ticket[]>(appState.tickets);
   const settingsRef = useRef<SystemSettings>(appState.settings);
 
@@ -247,12 +288,18 @@ export default function App() {
       if (s.soundAlertsEnabled) {
         soundService.playCashierWarningAlert(
           `Alerte caissier : échec WhatsApp pour ${clientName}. Veuillez l'appeler à l'accueil.`,
-          s.voiceAlertsEnabled ?? true
+          s.voiceAlertsEnabled ?? true,
+          s.voiceGender || 'FEMALE'
         );
       }
       setCashierAlertBanner(message);
     });
   }, []);
+
+  // Synchronisation du genre de voix (Féminine / Masculine) avec soundService
+  useEffect(() => {
+    soundService.setVoiceGender(appState.settings.voiceGender || 'FEMALE');
+  }, [appState.settings.voiceGender]);
 
   // Sauvegarde automatique lors des modifications d'état
   useEffect(() => {
@@ -260,6 +307,135 @@ export default function App() {
     ticketsRef.current = appState.tickets;
     settingsRef.current = appState.settings;
   }, [appState]);
+
+  // Helper centralisé d'envoi WhatsApp automatisé avec retour visuel + lien direct en mode simulation
+  const dispatchAutomatedWhatsApp = async (params: {
+    phone: string;
+    clientName: string;
+    templateName: string;
+    variables: Record<string, string>;
+    config: WhatsAppConfig;
+    whatsappEnabled?: boolean;
+    clientId?: string;
+    label?: string;
+    messageType?: 'template' | 'text';
+    customText?: string;
+  }) => {
+    if (!params.phone || params.whatsappEnabled === false) return;
+    const rendered = params.customText || renderTemplateText(params.templateName, params.variables);
+    const waMeUrl = buildWaMeUrl(params.phone, rendered);
+
+    const finalLog = await NotificationService.sendWithRetry(
+      params.phone,
+      params.clientName,
+      params.templateName,
+      params.variables,
+      params.config,
+      params.clientId,
+      (newLog) => {
+        setAppState((curr) => ({
+          ...curr,
+          notificationLogs: [newLog, ...curr.notificationLogs.filter((l) => l.id !== newLog.id)],
+        }));
+      },
+      {
+        messageType: params.messageType,
+        customText: params.customText,
+      }
+    );
+
+    const tag = params.label || 'Alerte WhatsApp';
+    if (finalLog.status === 'FAILED') {
+      setWhatsappToast({
+        status: 'error',
+        message: `${tag} — Échec API pour ${params.clientName} : ${finalLog.errorMessage || 'Erreur réseau'}.`,
+        waMeUrl,
+      });
+    } else if (finalLog.sendMode === 'SIMULATION') {
+      setWhatsappToast({
+        status: 'simulation',
+        message: `${tag} prête pour ${params.clientName} (Passerelle API non configurée : cliquez pour ouvrir dans WhatsApp).`,
+        waMeUrl,
+      });
+    } else {
+      setWhatsappToast({
+        status: 'live',
+        message: `${tag} envoyée automatiquement sur WhatsApp à ${params.clientName} !`,
+      });
+    }
+  };
+
+  // Envoi automatique du message WhatsApp de bienvenue lors de la 1ère inscription client
+  const sendClientWelcomeWhatsApp = (
+    client: Client,
+    config: WhatsAppConfig,
+    settings: SystemSettings
+  ) => {
+    if (!client.phone || settings.whatsappEnabled === false) return;
+    const basePortalUrl = (
+      settings.publicVerificationBaseUrl ||
+      (typeof window !== 'undefined' ? window.location.origin : 'https://goza.cd')
+    ).replace(/\/$/, '');
+    const portalUrl = `${basePortalUrl}/?tab=client`;
+    const welcomeText = buildClientWelcomeMessage({
+      fullName: client.fullName,
+      clientCode: client.clientCode,
+      referralCode: client.referralCode,
+      pin: client.pin,
+      portalUrl,
+    });
+
+    void dispatchAutomatedWhatsApp({
+      phone: client.phone,
+      clientName: client.fullName,
+      templateName: 'bienvenue_goza',
+      variables: {
+        '1': client.fullName.split(' ')[0] || client.fullName,
+        '2': client.clientCode,
+        '3': client.referralCode,
+        '4': portalUrl,
+        '5': client.pin,
+      },
+      config,
+      whatsappEnabled: settings.whatsappEnabled,
+      clientId: client.id,
+      label: 'Bienvenue GOZA',
+      messageType: 'text',
+      customText: welcomeText,
+    });
+  };
+
+  // Alerte préventive WhatsApp : "Bientôt votre tour" (position <= 3 dans la file d'attente)
+  useEffect(() => {
+    if (appState.settings.whatsappEnabled === false || !appState.whatsappConfig.autoNotifyQueueApproaching) {
+      return;
+    }
+    const waitingEntries = appState.queue.filter((q) => q.status === 'waiting');
+    waitingEntries.slice(0, 3).forEach((entry, index) => {
+      if (!entry.phone || approachingNotifiedRef.current.has(entry.id)) return;
+      // Ne pas envoyer deux alertes si un poste compatible est déjà libre et que c'est le #1 prêt à être appelé
+      const hasFreeStationNow = appState.stations.some(
+        (s) => s.status === 'available' && (entry.desiredStationType === 'ANY' || s.type === entry.desiredStationType)
+      );
+      if (index === 0 && hasFreeStationNow) return;
+
+      approachingNotifiedRef.current.add(entry.id);
+      const estWaitMinutes = String(Math.max(3, (index + 1) * 5));
+      void dispatchAutomatedWhatsApp({
+        phone: entry.phone,
+        clientName: entry.clientName,
+        templateName: 'bientot_votre_tour',
+        variables: {
+          '1': entry.clientName.split(' ')[0],
+          '2': estWaitMinutes,
+        },
+        config: appState.whatsappConfig,
+        whatsappEnabled: appState.settings.whatsappEnabled,
+        clientId: entry.clientId,
+        label: 'Pré-alerte File d’attente',
+      });
+    });
+  }, [appState.queue, appState.stations, appState.whatsappConfig, appState.settings.whatsappEnabled]);
 
   // Écouteur d'activité pour déconnexion automatique
   useEffect(() => {
@@ -561,7 +737,8 @@ export default function App() {
                 soundService.playSession5MinAlert(
                   st.name,
                   st.clientName,
-                  prev.settings.voiceAlertsEnabled ?? true
+                  prev.settings.voiceAlertsEnabled ?? true,
+                  prev.settings.voiceGender || 'FEMALE'
                 );
               }
             }
@@ -575,7 +752,8 @@ export default function App() {
                   soundService.playSession1MinAlert(
                     st.name,
                     st.clientName,
-                    prev.settings.voiceAlertsEnabled ?? true
+                    prev.settings.voiceAlertsEnabled ?? true,
+                    prev.settings.voiceGender || 'FEMALE'
                   );
                 }
               }
@@ -593,7 +771,8 @@ export default function App() {
                   soundService.playSessionEndSpokenAlert(
                     st.name,
                     st.clientName,
-                    prev.settings.voiceAlertsEnabled ?? true
+                    prev.settings.voiceAlertsEnabled ?? true,
+                    prev.settings.voiceGender || 'FEMALE'
                   );
                 }
               }
@@ -609,18 +788,25 @@ export default function App() {
                 });
               }
 
-              // Programmer la coupure domotique après le délai de grâce (default 120s pour sauvegarder)
+              // Programmer la coupure domotique après le délai de grâce (SAUF si le poste fait partie des 2 postes exemptés)
               const graceMs = (prev.settings.autoReleaseGraceSeconds || 120) * 1000;
               const target = prev.settings.autoCutTarget || 'SCREEN_ONLY';
+              const isExempt = isStationShellyExempt(st.id, prev.settings);
 
-              setTimeout(() => {
-                if (target === 'SCREEN_ONLY') {
-                  mqttGateway.publish(`gaminghub/station/${st.id}/screen/set`, 'OFF');
-                } else {
-                  mqttGateway.publish(`gaminghub/station/${st.id}/power/set`, 'OFF');
-                  mqttGateway.publish(`gaminghub/station/${st.id}/screen/set`, 'OFF');
-                }
-              }, graceMs);
+              if (!isExempt && (prev.settings.autoPowerOffAtSessionEnd ?? true)) {
+                const stDevice = prev.domotiqueDevices.find((d) => d.stationId === st.id);
+                const topicPrefix = prev.settings.mqttTopicPrefix;
+                setTimeout(() => {
+                  dispatchStationShellyCommand({
+                    stationId: st.id,
+                    state: 'OFF',
+                    target: target === 'SCREEN_ONLY' ? 'SCREEN' : 'BOTH',
+                    device: stDevice,
+                    topicPrefix,
+                    reason: 'AUTO_RELEASE_0M',
+                  });
+                }, graceMs);
+              }
 
               freedStations.push(st);
 
@@ -633,9 +819,9 @@ export default function App() {
                 clientPhone: undefined,
                 remainingSeconds: 0,
                 totalDurationMinutes: 0,
-                relayState: target === 'SCREEN_ONLY' ? true : false,
-                screenRelayState: false,
-                currentWatts: 0,
+                relayState: isExempt ? st.relayState : target === 'SCREEN_ONLY' ? true : false,
+                screenRelayState: isExempt ? st.screenRelayState : false,
+                currentWatts: isExempt ? (st.relayState ? getConsoleWatts(st.type) : 0) : 0,
                 lastUpdated: Date.now(),
               };
             }
@@ -686,27 +872,35 @@ export default function App() {
                 gracePeriodSeconds: 180,
               };
 
-              // Notification WhatsApp Business Cloud
-              if (nextClient.phone && prev.whatsappConfig.autoNotifyQueueTurn) {
-                NotificationService.sendWithRetry(
-                  nextClient.phone,
+              // Notification WhatsApp Business Cloud + Appel vocal automatique
+              if (prev.settings.soundAlertsEnabled) {
+                soundService.playQueueCallAlert(
                   nextClient.clientName,
-                  'poste_pret',
-                  {
-                    '1': nextClient.clientName.split(' ')[0],
-                    '2': String(freedSt.id),
-                    '3': freedSt.type,
-                    '4': '3',
-                  },
-                  prev.whatsappConfig,
-                  nextClient.clientId,
-                  (newLog) => {
-                    setAppState((curr) => ({
-                      ...curr,
-                      notificationLogs: [newLog, ...curr.notificationLogs.filter((l) => l.id !== newLog.id)],
-                    }));
-                  }
+                  freedSt.id,
+                  prev.settings.voiceAlertsEnabled ?? true,
+                  prev.settings.voiceGender || 'FEMALE'
                 );
+              }
+              if (nextClient.phone && prev.settings.whatsappEnabled !== false && prev.whatsappConfig.autoNotifyQueueTurn) {
+                const waCfg = prev.whatsappConfig;
+                const waOn = prev.settings.whatsappEnabled;
+                setTimeout(() => {
+                  void dispatchAutomatedWhatsApp({
+                    phone: nextClient.phone,
+                    clientName: nextClient.clientName,
+                    templateName: 'poste_pret',
+                    variables: {
+                      '1': nextClient.clientName.split(' ')[0],
+                      '2': String(freedSt.id),
+                      '3': freedSt.type,
+                      '4': '3',
+                    },
+                    config: waCfg,
+                    whatsappEnabled: waOn,
+                    clientId: nextClient.clientId,
+                    label: `Alerte Poste ${freedSt.id} prêt`,
+                  });
+                }, 0);
               }
             }
 
@@ -718,7 +912,7 @@ export default function App() {
                 userRole: 'SYSTEM',
                 cashierName: 'Automate Libération',
                 action: 'LIBERATION_AUTO_POSTE',
-                details: `Session Poste ${freedSt.id} (${lastReleased.clientName}) libérée automatiquement à 0 min. Extinction prévue dans ${prev.settings.autoReleaseGraceSeconds}s.`,
+                details: `Session Poste ${freedSt.id} (${lastReleased?.clientName || 'Joueur'}) libérée automatiquement à 0 min. Extinction prévue dans ${prev.settings.autoReleaseGraceSeconds}s.`,
                 stationId: freedSt.id,
               },
               ...newAuditLogs,
@@ -730,6 +924,36 @@ export default function App() {
           if (q.status === 'called' && q.gracePeriodSeconds > 0) {
             stateChanged = true;
             const nextGrace = q.gracePeriodSeconds - 1;
+
+            // Rappel WhatsApp à mi-parcours (90s restantes sur 180s)
+            if (
+              nextGrace === 90 &&
+              q.phone &&
+              prev.settings.whatsappEnabled !== false &&
+              prev.whatsappConfig.autoNotifyGraceReminder &&
+              !graceNotifiedRef.current.has(q.id)
+            ) {
+              graceNotifiedRef.current.add(q.id);
+              const waCfg = prev.whatsappConfig;
+              const waOn = prev.settings.whatsappEnabled;
+              setTimeout(() => {
+                void dispatchAutomatedWhatsApp({
+                  phone: q.phone,
+                  clientName: q.clientName,
+                  templateName: 'delai_depasse_rappel',
+                  variables: {
+                    '1': q.clientName.split(' ')[0],
+                    '2': 'Accueil',
+                    '3': '1',
+                  },
+                  config: waCfg,
+                  whatsappEnabled: waOn,
+                  clientId: q.clientId,
+                  label: 'Rappel délai de grâce',
+                });
+              }, 0);
+            }
+
             if (nextGrace === 0) {
               return { ...q, status: 'no_show' as const, gracePeriodSeconds: 0 };
             }
@@ -832,13 +1056,96 @@ export default function App() {
     setIsTicketModalOpen(true);
   };
 
-  const handleConfirmTicket = (ticket: Ticket, selectedClient?: Client, payWithPoints?: boolean) => {
+  const handleConfirmTicket = (
+    rawTicket: Ticket,
+    selectedClient?: Client,
+    payWithPoints?: boolean,
+    newClientRegistration?: NewClientTicketRegistration
+  ) => {
     soundService.playTicketSuccess();
 
-    mqttGateway.publish(`gaminghub/station/${ticket.stationId}/power/set`, 'ON');
+    // Si inscription demandée lors de l'achat d'un ticket 3H (180 min) minimum
+    let newlyRegisteredClient: Client | undefined;
+    let newlyRegisteredSponsor: Client | undefined;
+    let ticket = rawTicket;
+    let effectiveSelectedClient = selectedClient;
+
+    if (
+      newClientRegistration &&
+      !selectedClient &&
+      rawTicket.durationMinutes >= MINIMUM_REGISTRATION_TICKET_MINUTES
+    ) {
+      const duplicatePhone = appState.clients.some((c) => phonesMatch(c.phone, newClientRegistration.phone));
+      if (!duplicatePhone) {
+        if (newClientRegistration.sponsorCode) {
+          newlyRegisteredSponsor = appState.clients.find(
+            (c) => c.referralCode.toUpperCase() === newClientRegistration.sponsorCode!.toUpperCase()
+          );
+        }
+        const uniqueCode = 'KIN-' + Math.floor(1000 + Math.random() * 9000);
+        const referralCode = generateUniqueReferralCode(newClientRegistration.fullName, appState.clients);
+        newlyRegisteredClient = {
+          id: 'cli-' + Date.now(),
+          clientCode: uniqueCode,
+          pin: '1234',
+          fullName: newClientRegistration.fullName,
+          phone: newClientRegistration.phone,
+          email: newClientRegistration.email,
+          loyaltyPoints: 20, // 20 points de bienvenue
+          freeMinutesBalance: 0,
+          totalPlayMinutes: 0,
+          totalSpentCDF: 0,
+          totalSpentUSD: 0,
+          tier: 'NOUVEAU',
+          sessionsHistory: [],
+          referralCode,
+          referredById: newlyRegisteredSponsor?.id,
+          referredByName: newlyRegisteredSponsor?.fullName,
+          referralCount: 0,
+          totalReferralBonusPoints: 0,
+          whatsappConsent: true,
+          whatsappConsentDate: Date.now(),
+          dataConsentAccepted: true,
+          failedLoginAttempts: 0,
+          createdAt: Date.now(),
+        };
+        effectiveSelectedClient = newlyRegisteredClient;
+        ticket = {
+          ...rawTicket,
+          clientId: newlyRegisteredClient.id,
+          clientName: newlyRegisteredClient.fullName,
+          clientPhone: newlyRegisteredClient.phone,
+        };
+      }
+    }
+
+    const isExemptStation = isStationShellyExempt(ticket.stationId, appState.settings);
+    const shouldAutoPowerOn = appState.settings.autoPowerOnWithTicket !== false && !isExemptStation;
+    const targetDevice = appState.domotiqueDevices.find((d) => d.stationId === ticket.stationId);
+
+    if (shouldAutoPowerOn) {
+      // Déclenchement automatique STRICT du relais Shelly UNIQUEMENT pour le poste du ticket généré
+      dispatchStationShellyCommand({
+        stationId: ticket.stationId,
+        state: 'ON',
+        target: 'BOTH',
+        device: targetDevice,
+        topicPrefix: appState.settings.mqttTopicPrefix,
+        reason: `TICKET_${ticket.ticketNumber}`,
+      });
+    } else if (isExemptStation) {
+      mqttGateway.recordPacket(
+        `goza/station/${ticket.stationId}/shelly/exempt`,
+        'SKIPPED (Poste exempté — contrôle manuel)',
+        'MESSAGE_IN'
+      );
+    }
 
     setAppState((prev) => {
-      // 1. Mettre à jour le poste
+      const prevExempt = isStationShellyExempt(ticket.stationId, prev.settings);
+      const prevAutoPowerOn = prev.settings.autoPowerOnWithTicket !== false && !prevExempt;
+
+      // 1. Mettre à jour le poste (seul le poste du ticket non-exempté voit son relais passer automatiquement à ON)
       const updatedStations = prev.stations.map((st) => {
         if (st.id === ticket.stationId) {
           return {
@@ -852,30 +1159,68 @@ export default function App() {
             endTime: ticket.endTime,
             remainingSeconds: ticket.durationMinutes * 60,
             totalDurationMinutes: ticket.durationMinutes,
-            relayState: true,
-            screenRelayState: true,
-            currentWatts: getConsoleWatts(st.type),
+            relayState: prevAutoPowerOn ? true : st.relayState,
+            screenRelayState: prevAutoPowerOn ? true : st.screenRelayState,
+            currentWatts: prevAutoPowerOn
+              ? getConsoleWatts(st.type)
+              : st.relayState
+              ? getConsoleWatts(st.type)
+              : 0,
             lastUpdated: Date.now(),
           };
         }
         return st;
       });
 
-      // 2. Mettre à jour l'équipement domotique
+      // 2. Mettre à jour l'équipement domotique (uniquement si auto-allumage actif et poste non-exempté)
       const updatedDevices = prev.domotiqueDevices.map((d) => {
-        if (d.stationId === ticket.stationId) {
+        if (d.stationId === ticket.stationId && prevAutoPowerOn) {
           return { ...d, state: 'ON' as const, watts: getConsoleWatts(ticket.stationType) };
         }
         return d;
       });
 
       // 3. Traiter les points de fidélité et parrainage
-      let updatedClients = [...prev.clients];
+      let updatedClients = newlyRegisteredClient ? [newlyRegisteredClient, ...prev.clients] : [...prev.clients];
       const newTransactions = [...prev.loyaltyTransactions];
       const newTierHistory = [...prev.tierHistory];
+      const extraAuditLogs: AuditLog[] = [];
 
-      if (selectedClient) {
-        const perk = prev.tierRules.perks[selectedClient.tier];
+      if (newlyRegisteredClient) {
+        if (newlyRegisteredSponsor) {
+          const signupBonus = prev.settings.referralBonusSignup;
+          updatedClients = updatedClients.map((sc) =>
+            sc.id === newlyRegisteredSponsor!.id
+              ? {
+                  ...sc,
+                  loyaltyPoints: sc.loyaltyPoints + signupBonus,
+                  referralCount: sc.referralCount + 1,
+                  totalReferralBonusPoints: sc.totalReferralBonusPoints + signupBonus,
+                }
+              : sc
+          );
+          newTransactions.unshift({
+            id: 'lt-reg-ref-' + Date.now(),
+            clientId: newlyRegisteredSponsor.id,
+            clientName: newlyRegisteredSponsor.fullName,
+            type: 'REFERRAL_SIGNUP',
+            points: signupBonus,
+            description: `Parrainage nouveau joueur : ${newlyRegisteredClient.fullName}`,
+            createdAt: Date.now(),
+          });
+        }
+        extraAuditLogs.push({
+          id: 'aud-cli-' + Date.now(),
+          timestamp: Date.now(),
+          userRole: prev.currentRole,
+          cashierName: prev.currentUser,
+          action: 'INSCRIPTION_CLIENT',
+          details: `Nouveau joueur ${newlyRegisteredClient.fullName} (${newlyRegisteredClient.phone}) enregistré via ticket 3H+ ${ticket.ticketNumber} · Code Parrain : ${newlyRegisteredClient.referralCode}`,
+        });
+      }
+
+      if (effectiveSelectedClient) {
+        const perk = prev.tierRules.perks[effectiveSelectedClient.tier];
         const pointsMultiplier = perk.pointMultiplier || 1.0;
         const baseEarned = Math.floor(ticket.durationMinutes / prev.settings.pointEarnRateMinutes);
         const pointsEarned = Math.round(baseEarned * pointsMultiplier * (isHighTierConsole(ticket.stationType) ? 2 : 1));
@@ -894,7 +1239,7 @@ export default function App() {
         };
 
         updatedClients = updatedClients.map((c) => {
-          if (c.id === selectedClient.id) {
+          if (c.id === effectiveSelectedClient!.id) {
             const nextPoints = Math.max(0, c.loyaltyPoints - pointsSpent + (payWithPoints ? 0 : pointsEarned));
             const nextPlayTime = c.totalPlayMinutes + ticket.durationMinutes;
             const updatedSessions = [newSessionRecord, ...(c.sessionsHistory || [])];
@@ -916,6 +1261,27 @@ export default function App() {
                 clientName: c.fullName,
                 newTier: evaluation.calculatedTier,
               });
+
+              if (c.phone && prev.settings.whatsappEnabled !== false && prev.whatsappConfig.autoNotifyPromotions) {
+                const waCfg = prev.whatsappConfig;
+                const waOn = prev.settings.whatsappEnabled;
+                const promotedTierLabel = evaluation.calculatedTier;
+                setTimeout(() => {
+                  void dispatchAutomatedWhatsApp({
+                    phone: c.phone,
+                    clientName: c.fullName,
+                    templateName: 'promotion_statut',
+                    variables: {
+                      '1': c.fullName.split(' ')[0],
+                      '2': promotedTierLabel,
+                    },
+                    config: waCfg,
+                    whatsappEnabled: waOn,
+                    clientId: c.id,
+                    label: `Promotion ${promotedTierLabel}`,
+                  });
+                }, 0);
+              }
 
               newTierHistory.unshift({
                 id: 'th-' + Date.now(),
@@ -943,8 +1309,8 @@ export default function App() {
         if (payWithPoints) {
           newTransactions.unshift({
             id: 'lt-' + Date.now(),
-            clientId: selectedClient.id,
-            clientName: selectedClient.fullName,
+            clientId: effectiveSelectedClient.id,
+            clientName: effectiveSelectedClient.fullName,
             type: 'SPEND_FREE_TIME',
             points: -pointsSpent,
             description: `Session ${ticket.durationMinutes}m payée en points (Poste ${ticket.stationId})`,
@@ -953,8 +1319,8 @@ export default function App() {
         } else if (pointsEarned > 0) {
           newTransactions.unshift({
             id: 'lt-' + Date.now(),
-            clientId: selectedClient.id,
-            clientName: selectedClient.fullName,
+            clientId: effectiveSelectedClient.id,
+            clientName: effectiveSelectedClient.fullName,
             type: 'EARN_PLAY',
             points: pointsEarned,
             description: `Points session (${perk.label} x${perk.pointMultiplier}) ${ticket.durationMinutes}m (Poste ${ticket.stationId})`,
@@ -963,11 +1329,11 @@ export default function App() {
         }
 
         // Bonus parrainage
-        if (selectedClient.referredById && !payWithPoints) {
+        if (effectiveSelectedClient.referredById && !payWithPoints) {
           const sponsorBonus = Math.floor((pointsEarned * prev.settings.referralBonusPercentage) / 100);
           if (sponsorBonus > 0) {
             updatedClients = updatedClients.map((sc) => {
-              if (sc.id === selectedClient.referredById && sc.totalReferralBonusPoints < prev.settings.maxReferralBonusCap) {
+              if (sc.id === effectiveSelectedClient!.referredById && sc.totalReferralBonusPoints < prev.settings.maxReferralBonusCap) {
                 return {
                   ...sc,
                   loyaltyPoints: sc.loyaltyPoints + sponsorBonus,
@@ -979,11 +1345,11 @@ export default function App() {
 
             newTransactions.unshift({
               id: 'lt-ref-' + Date.now(),
-              clientId: selectedClient.referredById,
-              clientName: selectedClient.referredByName || 'Parrain',
+              clientId: effectiveSelectedClient.referredById,
+              clientName: effectiveSelectedClient.referredByName || 'Parrain',
               type: 'REFERRAL_PLAY',
               points: sponsorBonus,
-              description: `Bonus 10% parrainage sur session de ${selectedClient.fullName}`,
+              description: `Bonus 10% parrainage sur session de ${effectiveSelectedClient.fullName}`,
               createdAt: Date.now(),
             });
           }
@@ -1030,9 +1396,13 @@ export default function App() {
         loyaltyTransactions: newTransactions,
         tierHistory: newTierHistory,
         currentShift: updatedShift,
-        auditLogs: [newAudit, ...prev.auditLogs],
+        auditLogs: [newAudit, ...extraAuditLogs, ...prev.auditLogs],
       };
     });
+
+    if (newlyRegisteredClient) {
+      sendClientWelcomeWhatsApp(newlyRegisteredClient, appState.whatsappConfig, appState.settings);
+    }
 
     void syncTicketToServer(ticket);
     setIsTicketModalOpen(false);
@@ -1114,13 +1484,38 @@ export default function App() {
     if (!transferModalStation) return;
     const source = transferModalStation;
 
-    mqttGateway.publish(`gaminghub/station/${source.id}/power/set`, 'OFF');
-    mqttGateway.publish(`gaminghub/station/${targetStationId}/power/set`, 'ON');
+    const isSourceExempt = isStationShellyExempt(source.id, appState.settings);
+    const isTargetExempt = isStationShellyExempt(targetStationId, appState.settings);
+    const shouldPowerOnTarget = appState.settings.autoPowerOnWithTicket !== false && !isTargetExempt;
+
+    if (!isSourceExempt) {
+      dispatchStationShellyCommand({
+        stationId: source.id,
+        state: 'OFF',
+        target: 'BOTH',
+        device: appState.domotiqueDevices.find((d) => d.stationId === source.id),
+        topicPrefix: appState.settings.mqttTopicPrefix,
+        reason: 'TRANSFER_OUT',
+      });
+    }
+    if (shouldPowerOnTarget) {
+      dispatchStationShellyCommand({
+        stationId: targetStationId,
+        state: 'ON',
+        target: 'BOTH',
+        device: appState.domotiqueDevices.find((d) => d.stationId === targetStationId),
+        topicPrefix: appState.settings.mqttTopicPrefix,
+        reason: 'TRANSFER_IN',
+      });
+    }
 
     setAppState((prev) => {
       const targetStation = prev.stations.find((s) => s.id === targetStationId);
       if (!targetStation || targetStation.status !== 'available') return prev;
       const nowTs = Date.now();
+      const prevSourceExempt = isStationShellyExempt(source.id, prev.settings);
+      const prevTargetExempt = isStationShellyExempt(targetStationId, prev.settings);
+      const prevPowerTarget = prev.settings.autoPowerOnWithTicket !== false && !prevTargetExempt;
 
       const updatedStations = prev.stations.map((st) => {
         if (st.id === source.id) {
@@ -1135,9 +1530,9 @@ export default function App() {
             endTime: undefined,
             remainingSeconds: 0,
             totalDurationMinutes: 0,
-            relayState: false,
-            screenRelayState: false,
-            currentWatts: 0,
+            relayState: prevSourceExempt ? st.relayState : false,
+            screenRelayState: prevSourceExempt ? st.screenRelayState : false,
+            currentWatts: prevSourceExempt ? (st.relayState ? getConsoleWatts(st.type) : 0) : 0,
             lastUpdated: nowTs,
           };
         }
@@ -1153,9 +1548,13 @@ export default function App() {
             endTime: source.endTime,
             remainingSeconds: source.remainingSeconds,
             totalDurationMinutes: source.totalDurationMinutes,
-            relayState: true,
-            screenRelayState: true,
-            currentWatts: getConsoleWatts(st.type),
+            relayState: prevPowerTarget ? true : st.relayState,
+            screenRelayState: prevPowerTarget ? true : st.screenRelayState,
+            currentWatts: prevPowerTarget
+              ? getConsoleWatts(st.type)
+              : st.relayState
+              ? getConsoleWatts(st.type)
+              : 0,
             lastUpdated: nowTs,
           };
         }
@@ -1163,10 +1562,10 @@ export default function App() {
       });
 
       const updatedDevices = prev.domotiqueDevices.map((d) => {
-        if (d.stationId === source.id) {
+        if (d.stationId === source.id && !prevSourceExempt) {
           return { ...d, state: 'OFF' as const, watts: 0 };
         }
-        if (d.stationId === targetStationId) {
+        if (d.stationId === targetStationId && prevPowerTarget) {
           return { ...d, state: 'ON' as const, watts: getConsoleWatts(targetStation.type) };
         }
         return d;
@@ -1211,13 +1610,22 @@ export default function App() {
     setTransferModalStation(null);
   };
 
-  // 4. Terminer la session plus tôt
-  const handleEndSession = (station: Station) => {
-    if (!confirm(`Terminer la session en cours sur le Poste ${station.id} (${station.clientName}) ?`)) return;
-
-    mqttGateway.publish(`gaminghub/station/${station.id}/power/set`, 'OFF');
+  // 4. Terminer la session plus tôt (via modal in-app compatible iframe)
+  const executeEndSession = (station: Station) => {
+    const isExempt = isStationShellyExempt(station.id, appState.settings);
+    if (!isExempt) {
+      dispatchStationShellyCommand({
+        stationId: station.id,
+        state: 'OFF',
+        target: 'BOTH',
+        device: appState.domotiqueDevices.find((d) => d.stationId === station.id),
+        topicPrefix: appState.settings.mqttTopicPrefix,
+        reason: 'SESSION_ENDED_EARLY',
+      });
+    }
 
     setAppState((prev) => {
+      const prevExempt = isStationShellyExempt(station.id, prev.settings);
       const updatedStations = prev.stations.map((st) => {
         if (st.id === station.id) {
           return {
@@ -1231,9 +1639,9 @@ export default function App() {
             endTime: undefined,
             remainingSeconds: 0,
             totalDurationMinutes: 0,
-            relayState: false,
-            screenRelayState: false,
-            currentWatts: 0,
+            relayState: prevExempt ? st.relayState : false,
+            screenRelayState: prevExempt ? st.screenRelayState : false,
+            currentWatts: prevExempt ? (st.relayState ? getConsoleWatts(st.type) : 0) : 0,
             lastUpdated: Date.now(),
           };
         }
@@ -1241,7 +1649,7 @@ export default function App() {
       });
 
       const updatedDevices = prev.domotiqueDevices.map((d) =>
-        d.stationId === station.id ? { ...d, state: 'OFF' as const, watts: 0 } : d
+        d.stationId === station.id && !prevExempt ? { ...d, state: 'OFF' as const, watts: 0 } : d
       );
 
       const updatedTickets = prev.tickets.map((t) => {
@@ -1268,10 +1676,10 @@ export default function App() {
       // Si un client attend ce type de poste ou 'ANY' dans la file d'attente
       let updatedQueue = [...prev.queue];
       const nextClientIndex = updatedQueue.findIndex(
-        (q) => (q.status === 'waiting') && (q.desiredStationType === 'ANY' || q.desiredStationType === station.type)
+        (q) => q.status === 'waiting' && (q.desiredStationType === 'ANY' || q.desiredStationType === station.type)
       );
 
-      if (nextClientIndex !== -1 && prev.whatsappConfig.autoNotifyQueueTurn) {
+      if (nextClientIndex !== -1) {
         const nextClient = updatedQueue[nextClientIndex];
         updatedQueue[nextClientIndex] = {
           ...nextClient,
@@ -1280,27 +1688,36 @@ export default function App() {
           gracePeriodSeconds: 180,
         };
 
-        // Envoi asynchrone WhatsApp Business Cloud API
-        if (nextClient.phone) {
-          NotificationService.sendWithRetry(
-            nextClient.phone,
+        if (prev.settings.soundAlertsEnabled) {
+          soundService.playQueueCallAlert(
             nextClient.clientName,
-            'poste_pret',
-            {
-              '1': nextClient.clientName.split(' ')[0],
-              '2': String(station.id),
-              '3': station.type,
-              '4': '3',
-            },
-            prev.whatsappConfig,
-            nextClient.clientId,
-            (newLog) => {
-              setAppState((curr) => ({
-                ...curr,
-                notificationLogs: [newLog, ...curr.notificationLogs.filter((l) => l.id !== newLog.id)],
-              }));
-            }
+            station.id,
+            prev.settings.voiceAlertsEnabled ?? true,
+            prev.settings.voiceGender || 'FEMALE'
           );
+        }
+
+        // Envoi asynchrone WhatsApp Business Cloud API
+        if (nextClient.phone && prev.settings.whatsappEnabled !== false && prev.whatsappConfig.autoNotifyQueueTurn) {
+          const waCfg = prev.whatsappConfig;
+          const waOn = prev.settings.whatsappEnabled;
+          setTimeout(() => {
+            void dispatchAutomatedWhatsApp({
+              phone: nextClient.phone,
+              clientName: nextClient.clientName,
+              templateName: 'poste_pret',
+              variables: {
+                '1': nextClient.clientName.split(' ')[0],
+                '2': String(station.id),
+                '3': station.type,
+                '4': '3',
+              },
+              config: waCfg,
+              whatsappEnabled: waOn,
+              clientId: nextClient.clientId,
+              label: `Alerte Poste ${station.id} prêt`,
+            });
+          }, 0);
         }
       }
 
@@ -1312,6 +1729,17 @@ export default function App() {
         queue: updatedQueue,
         auditLogs: [newAudit, ...prev.auditLogs],
       };
+    });
+  };
+
+  const handleEndSession = (station: Station) => {
+    setConfirmModal({
+      title: `Terminer la session — ${station.name}`,
+      message: `Voulez-vous arrêter la session en cours de ${station.clientName || 'ce joueur'} et couper l'alimentation du poste ?`,
+      details: 'Le ticket sera marqué comme terminé et la prise domotique passera sur OFF.',
+      confirmLabel: 'Terminer la session',
+      danger: true,
+      onConfirm: () => executeEndSession(station),
     });
   };
 
@@ -1353,7 +1781,14 @@ export default function App() {
   // 6. Commuter Prise Domotique Manuellement
   const handleTogglePower = (station: Station) => {
     const nextState = !station.relayState;
-    mqttGateway.publish(`gaminghub/station/${station.id}/power/set`, nextState ? 'ON' : 'OFF');
+    dispatchStationShellyCommand({
+      stationId: station.id,
+      state: nextState ? 'ON' : 'OFF',
+      target: 'BOTH',
+      device: appState.domotiqueDevices.find((d) => d.stationId === station.id),
+      topicPrefix: appState.settings.mqttTopicPrefix,
+      reason: 'MANUAL_TOGGLE',
+    });
 
     setAppState((prev) => {
       const updatedStations = prev.stations.map((st) => {
@@ -1399,63 +1834,155 @@ export default function App() {
     });
   };
 
-  // 7. Master Power Controls
-  const handleMasterPowerOff = () => {
-    if (!confirm('ATTENTION : Déclencher l\'extinction générale de tous les postes et éclairages (fermeture de salle) ?')) return;
-
+  // 7. Master Power Controls (avec confirmation in-app sans window.confirm bloqué en iframe)
+  const executeMasterPowerOff = () => {
+    const now = Date.now();
     mqttGateway.publish('gaminghub/global/all_off', 'TRIGGER');
 
-    setAppState((prev) => ({
-      ...prev,
-      stations: prev.stations.map(s => ({
-        ...s,
-        status: 'available' as const,
-        remainingSeconds: 0,
-        relayState: false,
-        screenRelayState: false,
-        currentWatts: 0,
-      })),
-      domotiqueDevices: prev.domotiqueDevices.map(d => ({
-        ...d,
-        state: 'OFF' as const,
-        watts: 0,
-      })),
-      auditLogs: [
-        {
-          id: 'aud-' + Date.now(),
-          timestamp: Date.now(),
-          userRole: prev.currentRole,
-          cashierName: prev.currentUser,
-          action: 'EXTINCTION_GENERALE',
-          details: `Extinction générale de fermeture déclenchée par ${prev.currentUser}`,
-        },
-        ...prev.auditLogs,
-      ],
-    }));
+    setAppState((prev) => {
+      prev.stations.forEach((s) => {
+        mqttGateway.publish(`gaminghub/station/${s.id}/power/set`, 'OFF');
+        mqttGateway.publish(`gaminghub/station/${s.id}/screen/set`, 'OFF');
+      });
+      prev.domotiqueDevices.forEach((d) => {
+        mqttGateway.publish(`${d.relayTopic}/set`, 'OFF');
+      });
+
+      const closedTickets: Ticket[] = [];
+      const nextTickets = prev.tickets.map((t) => {
+        if (t.status === 'active' || t.status === 'extended') {
+          const done: Ticket = { ...t, status: 'completed' as const, actualEndTime: now };
+          closedTickets.push(done);
+          return done;
+        }
+        return t;
+      });
+
+      if (closedTickets.length > 0) {
+        setTimeout(() => {
+          closedTickets.forEach((t) => void syncTicketToServer(t));
+        }, 0);
+      }
+
+      return {
+        ...prev,
+        stations: prev.stations.map((s) => ({
+          ...s,
+          status: 'available' as const,
+          currentTicketId: undefined,
+          clientName: undefined,
+          clientPhone: undefined,
+          clientId: undefined,
+          startTime: undefined,
+          endTime: undefined,
+          remainingSeconds: 0,
+          totalDurationMinutes: 0,
+          relayState: false,
+          screenRelayState: false,
+          currentWatts: 0,
+          lastUpdated: now,
+        })),
+        domotiqueDevices: prev.domotiqueDevices.map((d) => ({
+          ...d,
+          state: 'OFF' as const,
+          watts: 0,
+        })),
+        tickets: nextTickets,
+        auditLogs: [
+          {
+            id: 'aud-' + now,
+            timestamp: now,
+            userRole: prev.currentRole,
+            cashierName: prev.currentUser,
+            action: 'EXTINCTION_GENERALE',
+            details: `Extinction générale de fermeture déclenchée par ${prev.currentUser} (${closedTickets.length} session(s) clôturée(s), tous relais OFF)`,
+          },
+          ...prev.auditLogs,
+        ],
+      };
+    });
+
+    setUndoAutoRelease(null);
+    setOneMinuteWarnings([]);
+    setSystemToast({
+      type: 'warning',
+      message: 'Extinction générale activée : tous les postes, écrans, éclairages et climatiseurs sont coupés (OFF).',
+    });
+
+    if (appState.settings.soundAlertsEnabled) {
+      soundService.playCashierWarningAlert(
+        'Extinction générale activée. Tous les postes et équipements de la salle sont coupés.',
+        appState.settings.voiceAlertsEnabled ?? true,
+        appState.settings.voiceGender || 'FEMALE'
+      );
+    }
+  };
+
+  const handleMasterPowerOff = () => {
+    const occupiedCountNow = appState.stations.filter((s) => s.status === 'occupied').length;
+    setConfirmModal({
+      title: 'Extinction Générale (Fermeture)',
+      message: 'Déclencher l’extinction totale de tous les postes de jeu, éclairages et climatiseurs ?',
+      details:
+        occupiedCountNow > 0
+          ? `Attention : ${occupiedCountNow} poste(s) sont actuellement en jeu. Leur session sera clôturée et toutes les prises passeront immédiatement sur OFF.`
+          : 'Tous les relais MQTT des postes et des lignes auxiliaires passeront immédiatement sur OFF (0 W).',
+      confirmLabel: 'Confirmer l’Extinction Totale',
+      danger: true,
+      onConfirm: executeMasterPowerOff,
+    });
   };
 
   const handleMasterPowerOn = () => {
-    mqttGateway.publish('gaminghub/global/all_on', 'TRIGGER');
+    mqttGateway.publish('gaminghub/global/aux_on', 'TRIGGER');
 
-    setAppState((prev) => ({
-      ...prev,
-      domotiqueDevices: prev.domotiqueDevices.map(d => ({
-        ...d,
-        state: 'ON' as const,
-        watts: d.type === 'AMBIENT_LIGHT' ? 85 : d.type === 'AIR_CONDITIONER' ? 1350 : 110,
-      })),
-      auditLogs: [
-        {
-          id: 'aud-' + Date.now(),
-          timestamp: Date.now(),
-          userRole: prev.currentRole,
-          cashierName: prev.currentUser,
-          action: 'ALLUMAGE_GENERAL',
-          details: `Allumage général des équipements déclenché par ${prev.currentUser}`,
-        },
-        ...prev.auditLogs,
-      ],
-    }));
+    setAppState((prev) => {
+      prev.domotiqueDevices.forEach((d) => {
+        const linkedSt = d.stationId ? prev.stations.find((s) => s.id === d.stationId) : undefined;
+        // Règle Shelly : n'allumer que les auxiliaires (lumières/clim) et les postes avec un ticket actif
+        if (!d.stationId || linkedSt?.status === 'occupied') {
+          mqttGateway.publish(`${d.relayTopic}/set`, 'ON');
+        }
+      });
+
+      return {
+        ...prev,
+        domotiqueDevices: prev.domotiqueDevices.map((d) => {
+          const linkedSt = d.stationId ? prev.stations.find((s) => s.id === d.stationId) : undefined;
+          if (d.stationId && linkedSt?.status !== 'occupied') {
+            return d;
+          }
+          const watts = linkedSt
+            ? getConsoleWatts(linkedSt.type)
+            : d.type === 'AMBIENT_LIGHT'
+            ? 85
+            : d.type === 'AIR_CONDITIONER'
+            ? 1350
+            : 110;
+          return {
+            ...d,
+            state: 'ON' as const,
+            watts,
+          };
+        }),
+        auditLogs: [
+          {
+            id: 'aud-' + Date.now(),
+            timestamp: Date.now(),
+            userRole: prev.currentRole,
+            cashierName: prev.currentUser,
+            action: 'ALLUMAGE_GENERAL',
+            details: `Allumage général (auxiliaires & postes en session active uniquement) déclenché par ${prev.currentUser}`,
+          },
+          ...prev.auditLogs,
+        ],
+      };
+    });
+
+    setSystemToast({
+      type: 'success',
+      message: 'Allumage activé pour les auxiliaires (éclairages/clim). Les relais Shelly des postes libres restent OFF en attente de ticket.',
+    });
   };
 
   // 8. File d'attente
@@ -1485,47 +2012,46 @@ export default function App() {
   };
 
   const handleCallQueueClient = (entryId: string) => {
-    const entry = appState.queue.find(q => q.id === entryId);
+    const entry = appState.queue.find((q) => q.id === entryId);
     const freeStation = entry
-      ? appState.stations.find(s => s.status === 'available' && (entry.desiredStationType === 'ANY' || s.type === entry.desiredStationType))
+      ? appState.stations.find((s) => s.status === 'available' && (entry.desiredStationType === 'ANY' || s.type === entry.desiredStationType))
       : undefined;
 
     if (appState.settings.soundAlertsEnabled) {
       soundService.playQueueCallAlert(
         entry?.clientName,
         freeStation?.id,
-        appState.settings.voiceAlertsEnabled ?? true
+        appState.settings.voiceAlertsEnabled ?? true,
+        appState.settings.voiceGender || 'FEMALE'
       );
     }
 
-    if (entry && entry.phone && appState.whatsappConfig.autoNotifyQueueTurn) {
+    if (entry && entry.phone && appState.settings.whatsappEnabled !== false && appState.whatsappConfig.autoNotifyQueueTurn) {
       const stationNum = freeStation ? String(freeStation.id) : '1';
-      const stationType = freeStation ? freeStation.type : (entry.desiredStationType === 'ANY' ? 'PS4' : entry.desiredStationType);
+      const stationType = freeStation ? freeStation.type : entry.desiredStationType === 'ANY' ? 'PS4' : entry.desiredStationType;
 
-      NotificationService.sendWithRetry(
-        entry.phone,
-        entry.clientName,
-        'poste_pret',
-        {
+      void dispatchAutomatedWhatsApp({
+        phone: entry.phone,
+        clientName: entry.clientName,
+        templateName: 'poste_pret',
+        variables: {
           '1': entry.clientName.split(' ')[0],
           '2': stationNum,
           '3': stationType,
           '4': '3',
         },
-        appState.whatsappConfig,
-        entry.clientId,
-        (newLog) => {
-          setAppState((curr) => ({
-            ...curr,
-            notificationLogs: [newLog, ...curr.notificationLogs.filter((l) => l.id !== newLog.id)],
-          }));
-        }
-      );
+        config: appState.whatsappConfig,
+        whatsappEnabled: appState.settings.whatsappEnabled,
+        clientId: entry.clientId,
+        label: `Appel File d’attente (Poste ${stationNum})`,
+      });
     }
 
     setAppState((prev) => ({
       ...prev,
-      queue: prev.queue.map(q => q.id === entryId ? { ...q, status: 'called' as const, calledAt: Date.now(), gracePeriodSeconds: 180 } : q),
+      queue: prev.queue.map((q) =>
+        q.id === entryId ? { ...q, status: 'called' as const, calledAt: Date.now(), gracePeriodSeconds: 180 } : q
+      ),
       auditLogs: [
         {
           id: 'aud-' + Date.now(),
@@ -1533,7 +2059,7 @@ export default function App() {
           userRole: prev.currentRole,
           cashierName: prev.currentUser,
           action: 'APPEL_CLIENT_FILE',
-          details: `Appel et notification WhatsApp pour ${entry?.clientName || entryId}`,
+          details: `Appel vocal et notification WhatsApp pour ${entry?.clientName || entryId}`,
         },
         ...prev.auditLogs,
       ],
@@ -1614,26 +2140,49 @@ export default function App() {
     }));
   };
 
-  // 9. Inscription Client & Parrainage Anti-Fraude
+  // 9. Inscription Client (Ticket 3H obligatoire) & Parrainage Anti-Fraude (max 5 car.)
   const handleAddClient = (
     clientData: Omit<Client, 'id' | 'clientCode' | 'loyaltyPoints' | 'freeMinutesBalance' | 'totalPlayMinutes' | 'totalSpentCDF' | 'totalSpentUSD' | 'tier' | 'referralCode' | 'referralCount' | 'totalReferralBonusPoints' | 'createdAt' | 'sessionsHistory' | 'dataConsentAccepted' | 'failedLoginAttempts' | 'pin'>,
-    sponsorCode?: string
+    sponsorCode?: string,
+    qualifyingTicketNumber?: string
   ): { success: boolean; message: string } => {
-    const phoneExists = appState.clients.some(c => c.phone.trim() === clientData.phone.trim());
+    const phoneExists = appState.clients.some(
+      (c) => phonesMatch(c.phone, clientData.phone) || c.phone.trim() === clientData.phone.trim()
+    );
     if (phoneExists) {
       return { success: false, message: 'Ce numéro de téléphone est déjà enregistré dans le fichier client.' };
     }
 
+    const qualifyingTicket = findQualifying3HTicket(
+      appState.tickets,
+      clientData.phone,
+      qualifyingTicketNumber
+    );
+    if (!qualifyingTicket) {
+      return {
+        success: false,
+        message:
+          "Inscription refusée : un client ne peut être enregistré dans le système que s'il achète un ticket de 3H (180 min) minimum.",
+      };
+    }
+
     let sponsor: Client | undefined = undefined;
     if (sponsorCode) {
-      sponsor = appState.clients.find(c => c.referralCode.toUpperCase() === sponsorCode.toUpperCase());
+      const cleanSponsor = sponsorCode.trim().toUpperCase();
+      if (!isValidReferralCodeFormat(cleanSponsor)) {
+        return {
+          success: false,
+          message: 'Code parrain invalide : maximum 5 caractères composés de lettres et de chiffres.',
+        };
+      }
+      sponsor = appState.clients.find((c) => c.referralCode.toUpperCase() === cleanSponsor);
       if (!sponsor) {
-        return { success: false, message: `Code parrain "${sponsorCode}" introuvable.` };
+        return { success: false, message: `Code parrain "${cleanSponsor}" introuvable.` };
       }
     }
 
     const uniqueCode = 'KIN-' + Math.floor(1000 + Math.random() * 9000);
-    const referralCode = clientData.fullName.split(' ')[0].toUpperCase() + '243';
+    const referralCode = generateUniqueReferralCode(clientData.fullName, appState.clients);
 
     const newClient: Client = {
       ...clientData,
@@ -1642,11 +2191,22 @@ export default function App() {
       pin: '1234',
       loyaltyPoints: 20, // 20 points de bienvenue
       freeMinutesBalance: 0,
-      totalPlayMinutes: 0,
-      totalSpentCDF: 0,
-      totalSpentUSD: 0,
+      totalPlayMinutes: qualifyingTicket.durationMinutes,
+      totalSpentCDF: qualifyingTicket.amountCDF,
+      totalSpentUSD: qualifyingTicket.amountUSD,
       tier: 'NOUVEAU',
-      sessionsHistory: [],
+      sessionsHistory: [
+        {
+          ticketId: qualifyingTicket.ticketNumber,
+          date: qualifyingTicket.createdAt,
+          durationMinutes: qualifyingTicket.durationMinutes,
+          amountPaidCDF: qualifyingTicket.amountCDF,
+          amountPaidUSD: qualifyingTicket.amountUSD,
+          isPaidSession: qualifyingTicket.paymentMethod !== 'LOYALTY_POINTS',
+          stationType: qualifyingTicket.stationType,
+          weekNumberYear: getISOWeekKey(new Date(qualifyingTicket.createdAt)),
+        },
+      ],
       referralCode,
       referredById: sponsor?.id,
       referredByName: sponsor?.fullName,
@@ -1660,6 +2220,17 @@ export default function App() {
     setAppState((prev) => {
       let updatedClients = [newClient, ...prev.clients];
       const newTransactions = [...prev.loyaltyTransactions];
+
+      const updatedTickets = prev.tickets.map((t) =>
+        t.id === qualifyingTicket.id
+          ? {
+              ...t,
+              clientId: newClient.id,
+              clientName: newClient.fullName,
+              clientPhone: newClient.phone,
+            }
+          : t
+      );
 
       if (sponsor) {
         const bonus = prev.settings.referralBonusSignup;
@@ -1689,6 +2260,7 @@ export default function App() {
       return {
         ...prev,
         clients: updatedClients,
+        tickets: updatedTickets,
         loyaltyTransactions: newTransactions,
         auditLogs: [
           {
@@ -1697,14 +2269,19 @@ export default function App() {
             userRole: prev.currentRole,
             cashierName: prev.currentUser,
             action: 'INSCRIPTION_CLIENT',
-            details: `Nouveau joueur ${newClient.fullName} (${newClient.phone}) inscrit par ${prev.currentUser}${sponsor ? ` (Parrainé par ${sponsor.fullName})` : ''}`,
+            details: `Nouveau joueur ${newClient.fullName} (${newClient.phone}) inscrit par ${prev.currentUser} avec ticket 3H+ ${qualifyingTicket.ticketNumber} · Code Parrain: ${newClient.referralCode}${sponsor ? ` (Parrainé par ${sponsor.fullName})` : ''}`,
           },
           ...prev.auditLogs,
         ],
       };
     });
 
-    return { success: true, message: 'Client enregistré avec succès !' };
+    sendClientWelcomeWhatsApp(newClient, appState.whatsappConfig, appState.settings);
+
+    return {
+      success: true,
+      message: `Client ${newClient.fullName} enregistré (Code Parrain : ${newClient.referralCode}) ! Notification de bienvenue WhatsApp déclenchée.`,
+    };
   };
 
   // 10. Conversion Points
@@ -1757,6 +2334,26 @@ export default function App() {
     setAppState((prev) => {
       const client = prev.clients.find(c => c.id === clientId);
       if (!client) return prev;
+
+      if (client.phone && prev.settings.whatsappEnabled !== false && prev.whatsappConfig.autoNotifyPromotions) {
+        const waCfg = prev.whatsappConfig;
+        const waOn = prev.settings.whatsappEnabled;
+        setTimeout(() => {
+          void dispatchAutomatedWhatsApp({
+            phone: client.phone,
+            clientName: client.fullName,
+            templateName: 'promotion_statut',
+            variables: {
+              '1': client.fullName.split(' ')[0],
+              '2': 'VIP',
+            },
+            config: waCfg,
+            whatsappEnabled: waOn,
+            clientId: client.id,
+            label: 'Promotion VIP',
+          });
+        }, 0);
+      }
 
       const updatedClients = prev.clients.map((c) => {
         if (c.id === clientId) {
@@ -1850,8 +2447,24 @@ export default function App() {
   const handleUndoAutoRelease = () => {
     if (!undoAutoRelease) return;
     const { stationId, ticket } = undoAutoRelease;
+    const isExempt = isStationShellyExempt(stationId, appState.settings);
+    const shouldPowerOn = appState.settings.autoPowerOnWithTicket !== false && !isExempt;
+
+    if (shouldPowerOn) {
+      dispatchStationShellyCommand({
+        stationId,
+        state: 'ON',
+        target: 'BOTH',
+        device: appState.domotiqueDevices.find((d) => d.stationId === stationId),
+        topicPrefix: appState.settings.mqttTopicPrefix,
+        reason: 'UNDO_AUTO_RELEASE',
+      });
+    }
 
     setAppState((prev) => {
+      const prevExempt = isStationShellyExempt(stationId, prev.settings);
+      const prevPowerOn = prev.settings.autoPowerOnWithTicket !== false && !prevExempt;
+
       const updatedStations = prev.stations.map((st) => {
         if (st.id === stationId) {
           return {
@@ -1862,13 +2475,23 @@ export default function App() {
             clientPhone: ticket.clientPhone,
             remainingSeconds: 300, // 5 minutes de prolongation de secours
             endTime: Date.now() + 300000,
-            relayState: true,
-            screenRelayState: true,
-            currentWatts: getConsoleWatts(st.type),
+            relayState: prevPowerOn ? true : st.relayState,
+            screenRelayState: prevPowerOn ? true : st.screenRelayState,
+            currentWatts: prevPowerOn
+              ? getConsoleWatts(st.type)
+              : st.relayState
+              ? getConsoleWatts(st.type)
+              : 0,
           };
         }
         return st;
       });
+
+      const updatedDevices = prev.domotiqueDevices.map((d) =>
+        d.stationId === stationId && prevPowerOn
+          ? { ...d, state: 'ON' as const, watts: getConsoleWatts(ticket.stationType) }
+          : d
+      );
 
       const updatedTickets = prev.tickets.map((t) => {
         if (t.id === ticket.id) {
@@ -1886,13 +2509,10 @@ export default function App() {
         return t;
       });
 
-      // Rallumer écran et console via MQTT
-      mqttGateway.publish(`gaminghub/station/${stationId}/power/set`, 'ON');
-      mqttGateway.publish(`gaminghub/station/${stationId}/screen/set`, 'ON');
-
       return {
         ...prev,
         stations: updatedStations,
+        domotiqueDevices: updatedDevices,
         tickets: updatedTickets,
         auditLogs: [
           {
@@ -2029,7 +2649,7 @@ export default function App() {
     if (userToEdit.role === 'ADMIN' && newRole !== 'ADMIN') {
       const activeAdminsCount = appState.staffUsers.filter((u) => u.role === 'ADMIN' && u.isActive && !u.isArchived).length;
       if (activeAdminsCount <= 1) {
-        alert('Protection système : impossible de rétrograder le dernier administrateur actif.');
+        setCashierAlertBanner('Protection système : impossible de rétrograder le dernier administrateur actif.');
         return;
       }
     }
@@ -2421,7 +3041,7 @@ export default function App() {
     const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(appState, null, 2));
     const downloadAnchor = document.createElement('a');
     downloadAnchor.setAttribute('href', dataStr);
-    downloadAnchor.setAttribute('download', `kin_gaming_hub_backup_${new Date().toISOString().slice(0, 10)}.json`);
+    downloadAnchor.setAttribute('download', `goza_backup_${new Date().toISOString().slice(0, 10)}.json`);
     document.body.appendChild(downloadAnchor);
     downloadAnchor.click();
     downloadAnchor.remove();
@@ -2436,7 +3056,7 @@ export default function App() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.setAttribute('href', url);
-    link.setAttribute('download', `kin_gaming_tickets_${new Date().toISOString().slice(0, 10)}.csv`);
+    link.setAttribute('download', `goza_tickets_${new Date().toISOString().slice(0, 10)}.csv`);
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -2464,7 +3084,7 @@ export default function App() {
       });
 
       if (!res.ok && res.status === 403) {
-        alert('Erreur serveur HTTP 403 : Accès interdit. Seul l\'administrateur peut modifier les réglages.');
+        setCashierAlertBanner('Erreur serveur HTTP 403 : Accès interdit. Seul l’administrateur peut modifier les réglages.');
         return;
       }
     } catch {
@@ -2586,7 +3206,7 @@ export default function App() {
     const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(appState.settings, null, 2));
     const downloadAnchor = document.createElement('a');
     downloadAnchor.setAttribute('href', dataStr);
-    downloadAnchor.setAttribute('download', `kin_gaming_hub_config_${new Date().toISOString().slice(0, 10)}.json`);
+    downloadAnchor.setAttribute('download', `goza_config_${new Date().toISOString().slice(0, 10)}.json`);
     document.body.appendChild(downloadAnchor);
     downloadAnchor.click();
     downloadAnchor.remove();
@@ -2775,25 +3395,14 @@ export default function App() {
     if (!resolvedBackgroundUrl || resolvedBackgroundOpacity <= 0) return null;
     return (
       <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden" aria-hidden="true">
-        {resolvedBackgroundUrl === DEFAULT_PAGE_BACKGROUND_URL ? (
-          <picture>
-            <source srcSet="/assets/aistudio/kin_gaming_hub_bg_opt.webp" type="image/webp" />
-            <img
-              src={DEFAULT_PAGE_BACKGROUND_URL}
-              alt=""
-              style={{ opacity: resolvedBackgroundOpacity }}
-              className="w-full h-full object-cover object-center select-none"
-            />
-          </picture>
-        ) : (
-          <img
-            src={resolvedBackgroundUrl}
-            alt=""
-            style={{ opacity: resolvedBackgroundOpacity }}
-            className="w-full h-full object-cover object-center select-none"
-          />
-        )}
-        <div className="absolute inset-0 bg-gradient-to-b from-[#090D16]/40 via-transparent to-[#090D16]/60" />
+        <img
+          src={resolvedBackgroundUrl}
+          alt=""
+          referrerPolicy="no-referrer"
+          style={{ opacity: resolvedBackgroundOpacity }}
+          className="w-full h-full object-cover object-center select-none"
+        />
+        <div className="absolute inset-0 bg-gradient-to-b from-[#090D16]/45 via-transparent to-[#090D16]/65" />
       </div>
     );
   };
@@ -2801,9 +3410,9 @@ export default function App() {
   // Vue publique autonome de vérification de ticket via QR Code (/t/:token ou ?t=:token)
   if (verificationToken) {
     return (
-      <div className="relative min-h-screen bg-[#090D16] text-slate-100 flex flex-col font-sans overflow-x-hidden">
+      <div className="relative min-h-screen w-full bg-[#090D16] text-slate-100 flex flex-col font-sans overflow-x-hidden">
         {renderGlobalBackground()}
-        <main className="relative z-10 flex-1 w-full max-w-4xl mx-auto p-4 lg:p-6">
+        <main className="relative z-10 flex-1 w-full px-4 sm:px-6 lg:px-8 py-4 lg:py-6">
           <PublicTicketVerificationView
             token={verificationToken}
             tickets={appState.tickets}
@@ -2838,19 +3447,14 @@ export default function App() {
   // Vue isolée Espace Client (le joueur ne voit strictement que ses informations et rien d'autre)
   if (activeTab === 'customer_portal' && !verificationToken) {
     return (
-      <div className="relative min-h-screen bg-[#090D16] text-slate-100 flex flex-col font-sans overflow-x-hidden">
+      <div className="relative min-h-screen w-full bg-[#090D16] text-slate-100 flex flex-col font-sans overflow-x-hidden">
         {renderGlobalBackground()}
-        <header className="bg-slate-900/95 backdrop-blur-md border-b border-slate-800 sticky top-0 z-40 px-4 lg:px-6 py-3">
-          <div className="max-w-4xl mx-auto flex items-center justify-between gap-4">
-            <div className="flex items-center gap-2.5">
-              <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-amber-500 to-yellow-400 flex items-center justify-center shadow-lg shadow-amber-500/20">
-                <Gamepad2 className="w-5 h-5 text-slate-950" />
-              </div>
-              <div>
-                <span className="text-base font-bold tracking-tight text-white">Kin Gaming Hub</span>
-                <div className="text-[10px] text-amber-400 font-mono font-bold tracking-wider">
-                  ESPACE CLIENT PERSONNEL
-                </div>
+        <header className="bg-slate-900/95 backdrop-blur-md border-b border-slate-800 sticky top-0 z-40 w-full px-4 sm:px-6 lg:px-8 py-3">
+          <div className="w-full flex items-center justify-between gap-4">
+            <div className="flex flex-col">
+              <GozaWordmark name={appState.settings.venueName || 'GOZA'} size="md" accent="amber" />
+              <div className="text-[10px] text-amber-400 font-mono font-bold tracking-wider pl-11 -mt-0.5">
+                ESPACE CLIENT PERSONNEL
               </div>
             </div>
 
@@ -2868,7 +3472,7 @@ export default function App() {
           </div>
         </header>
 
-        <main className="relative z-10 flex-1 w-full max-w-4xl mx-auto p-4 lg:p-6">
+        <main className="relative z-10 flex-1 w-full px-4 sm:px-6 lg:px-8 py-4 lg:py-6">
           <CustomerPortalView
             clients={appState.clients}
             queue={appState.queue}
@@ -2958,7 +3562,7 @@ export default function App() {
           if (user.mustChangePassword && !postponedFirstLoginUserIds.includes(user.id)) {
             setFirstLoginPromptUser(user);
           }
-          setActiveTab('stations');
+          setActiveTab('dashboard');
         }}
         onClientLogin={(client) => {
           setAppState((prev) => ({
@@ -2973,12 +3577,16 @@ export default function App() {
   }
 
   return (
-    <div className="relative min-h-screen bg-[#090D16] text-slate-100 flex flex-col font-sans overflow-x-hidden">
+    <div className="relative min-h-screen bg-[#090D16] text-slate-100 flex flex-col font-sans overflow-x-clip">
       {renderGlobalBackground()}
       {/* En-tête Global Top Bar */}
       <Header
         activeTab={activeTab}
         setActiveTab={setActiveTab}
+        navLayout={navLayout}
+        onToggleNavLayout={() =>
+          setNavLayout((prev) => (prev === 'horizontal' ? 'sidebar' : 'horizontal'))
+        }
         settings={appState.settings}
         setSettings={(val: any) => {
           setAppState(prev => ({
@@ -3004,6 +3612,19 @@ export default function App() {
         pendingSyncCount={pendingSyncCount}
         onSyncNow={handleSyncNow}
       />
+
+      <div className="relative z-10 flex-1 w-full flex flex-col md:flex-row">
+        {navLayout === 'sidebar' && (
+          <SidebarNav
+            activeTab={activeTab}
+            setActiveTab={setActiveTab}
+            currentStaffUser={appState.currentStaffUser}
+            waitingCount={waitingCount}
+            onSwitchToHorizontal={() => setNavLayout('horizontal')}
+          />
+        )}
+
+        <div className="flex-1 min-w-0 flex flex-col">
 
       {/* Bannière d'Annulation de Libération Automatique (2 minutes - Modification 4) */}
       {undoAutoRelease && undoAutoRelease.expiresAt > Date.now() && (
@@ -3058,7 +3679,35 @@ export default function App() {
         </div>
       )}
 
-      {/* Retour d'envoi WhatsApp (Meta API ou Simulation + lien direct wa.me) */}
+      {/* Retour Système / Domotique (Extinction Générale, Allumage) */}
+      {systemToast && (
+        <div
+          className={`border-b px-4 py-2.5 flex items-center justify-between gap-2 text-xs ${
+            systemToast.type === 'warning'
+              ? 'bg-rose-500/20 border-rose-500/50 text-rose-100'
+              : systemToast.type === 'success'
+              ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-100'
+              : 'bg-cyan-500/20 border-cyan-500/40 text-cyan-100'
+          }`}
+        >
+          <div className="flex items-center gap-2 font-semibold">
+            {systemToast.type === 'warning' ? (
+              <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+            ) : (
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+            )}
+            <span>{systemToast.message}</span>
+          </div>
+          <button
+            onClick={() => setSystemToast(null)}
+            className="text-slate-300 hover:text-white p-1 cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      {/* Retour d'envoi WhatsApp (Meta / CallMeBot / Webhook ou Simulation + lien direct WhatsApp) */}
       {whatsappToast && (
         <div
           className={`border-b px-4 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs ${
@@ -3084,12 +3733,12 @@ export default function App() {
                 className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg inline-flex items-center gap-1.5 transition"
               >
                 <ExternalLink className="w-3.5 h-3.5" />
-                <span>Ouvrir dans WhatsApp (wa.me)</span>
+                <span>Ouvrir dans WhatsApp</span>
               </a>
             )}
             <button
               onClick={() => setWhatsappToast(null)}
-              className="text-slate-300 hover:text-white p-1"
+              className="text-slate-300 hover:text-white p-1 cursor-pointer"
             >
               <X className="w-4 h-4" />
             </button>
@@ -3137,40 +3786,36 @@ export default function App() {
         </div>
       )}
 
-      {/* Contenu Principal */}
-      <main className="relative z-10 flex-1 max-w-7xl w-full mx-auto p-4 lg:p-6 space-y-6">
+      {/* Contenu Principal Plein Écran */}
+      <main className="relative z-10 flex-1 w-full px-4 sm:px-6 lg:px-8 py-4 lg:py-6 space-y-6">
           <>
+            {/* Onglet 0 : Tableau de bord Exécutif & Opérationnel GOZA */}
+            {activeTab === 'dashboard' && (
+              <DashboardView
+                stations={appState.stations}
+                tickets={appState.tickets}
+                snackSales={appState.snackSales}
+                clients={appState.clients}
+                queue={appState.queue}
+                devices={appState.domotiqueDevices}
+                currentShift={appState.currentShift}
+                auditLogs={appState.auditLogs}
+                settings={appState.settings}
+                currentRole={appState.currentRole}
+                onNavigateTab={setActiveTab}
+                onOpenTicket={handleOpenTicket}
+                onPrintTicket={(ticket) => setCurrentPrintingTicket(ticket)}
+                onExtendStation={handleExtend}
+                onEndSession={handleEndSession}
+              />
+            )}
+
             {/* Onglet 1 : Tableau de bord 10 Postes Live */}
             {activeTab === 'stations' && (
               <div className="space-y-4">
-                {/* Bannière Dual-Entry Accueil (Modification 3) */}
-                <div className="bg-gradient-to-r from-blue-950/40 via-purple-950/30 to-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5 flex flex-col md:flex-row items-center justify-between gap-4 shadow-xl">
-                  <div className="space-y-1 text-center md:text-left">
-                    <div className="inline-flex items-center gap-2 px-2.5 py-0.5 rounded-full bg-blue-500/15 border border-blue-500/30 text-blue-300 text-[11px] font-mono">
-                      <span>Salle de Jeux Vidéo Kinshasa</span>
-                      <span>·</span>
-                      <span>{ps4TotalCount} PS4 &amp; {ps5TotalCount} PS5</span>
-                    </div>
-                    <h1 className="text-lg sm:text-xl font-black text-white tracking-tight">
-                      Kin Gaming Hub — Système Intégré &amp; Domotique
-                    </h1>
-                    <p className="text-xs text-slate-400">
-                      Choisissez votre accès : Espace Joueur (points, temps, file) ou Espace Personnel (caisse &amp; postes).
-                    </p>
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-3 shrink-0">
-                    <button
-                      onClick={() => setActiveTab('customer_portal')}
-                      className="px-4 py-2.5 bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 text-slate-950 font-black text-xs rounded-xl flex items-center gap-2 shadow-lg shadow-amber-500/30 transition transform hover:-translate-y-0.5 cursor-pointer"
-                    >
-                      <Smartphone className="w-4 h-4 text-slate-950" />
-                      <div className="text-left">
-                        <div className="leading-tight font-black">Espace Client</div>
-                        <div className="text-[10px] text-slate-900 font-semibold">Points, Rang &amp; File d&apos;attente</div>
-                      </div>
-                    </button>
-
+                {/* Bannière Dual-Entry Accueil (uniquement si des actions rapides sont affichées) */}
+                {(appState.currentStaffUser?.role === 'ADMIN' || !appState.isStaffAuthenticated) && (
+                  <div className="bg-gradient-to-r from-blue-950/50 via-slate-900/90 to-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5 flex flex-wrap items-center justify-end gap-3 shadow-xl">
                     {appState.currentStaffUser?.role === 'ADMIN' && (
                       <button
                         onClick={() => setActiveTab('settings')}
@@ -3197,7 +3842,7 @@ export default function App() {
                       </button>
                     )}
                   </div>
-                </div>
+                )}
 
                 <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-900/60 border border-slate-800 rounded-xl px-4 py-2.5 text-xs">
                   <div className="flex items-center gap-4">
@@ -3228,6 +3873,7 @@ export default function App() {
                 <StationCard
                   key={station.id}
                   station={station}
+                  isShellyExempt={isStationShellyExempt(station.id, appState.settings)}
                   onOpenTicket={handleOpenTicket}
                   onExtend={handleExtend}
                   onTransfer={handleTransfer}
@@ -3255,32 +3901,39 @@ export default function App() {
               }
             }}
             onRefundTicket={(ticketId) => {
-              if (confirm('Voulez-vous annuler et rembourser ce ticket ?')) {
-                setAppState(prev => ({
-                  ...prev,
-                  tickets: prev.tickets.map(t => {
-                    if (t.id === ticketId) {
-                      const refunded: Ticket = { ...t, status: 'refunded' as const };
-                      setTimeout(() => {
-                        void syncTicketToServer(refunded);
-                      }, 0);
-                      return refunded;
-                    }
-                    return t;
-                  }),
-                  auditLogs: [
-                    {
-                      id: 'aud-' + Date.now(),
-                      timestamp: Date.now(),
-                      userRole: prev.currentRole,
-                      cashierName: prev.currentUser,
-                      action: 'REMBOURSEMENT_TICKET',
-                      details: `Ticket ${ticketId} annulé et remboursé par ${prev.currentUser}`,
-                    },
-                    ...prev.auditLogs,
-                  ],
-                }));
-              }
+              setConfirmModal({
+                title: 'Annuler et rembourser ce ticket ?',
+                message: 'Confirmez-vous l’annulation et le remboursement de ce ticket ?',
+                details: 'Cette action sera enregistrée dans le journal d’audit de caisse.',
+                confirmLabel: 'Confirmer le remboursement',
+                danger: true,
+                onConfirm: () => {
+                  setAppState((prev) => ({
+                    ...prev,
+                    tickets: prev.tickets.map((t) => {
+                      if (t.id === ticketId) {
+                        const refunded: Ticket = { ...t, status: 'refunded' as const };
+                        setTimeout(() => {
+                          void syncTicketToServer(refunded);
+                        }, 0);
+                        return refunded;
+                      }
+                      return t;
+                    }),
+                    auditLogs: [
+                      {
+                        id: 'aud-' + Date.now(),
+                        timestamp: Date.now(),
+                        userRole: prev.currentRole,
+                        cashierName: prev.currentUser,
+                        action: 'REMBOURSEMENT_TICKET',
+                        details: `Ticket ${ticketId} annulé et remboursé par ${prev.currentUser}`,
+                      },
+                      ...prev.auditLogs,
+                    ],
+                  }));
+                },
+              });
             }}
           />
         )}
@@ -3302,6 +3955,7 @@ export default function App() {
         {activeTab === 'loyalty' && (
           <LoyaltyView
             clients={appState.clients}
+            tickets={appState.tickets}
             transactions={appState.loyaltyTransactions}
             tierHistory={appState.tierHistory}
             settings={appState.settings}
@@ -3324,10 +3978,33 @@ export default function App() {
               const dev = appState.domotiqueDevices.find(d => d.id === deviceId);
               if (!dev) return;
               const nextState = dev.state === 'ON' ? 'OFF' : 'ON';
-              mqttGateway.publish(dev.relayTopic + '/set', nextState);
+              if (dev.stationId) {
+                dispatchStationShellyCommand({
+                  stationId: dev.stationId,
+                  state: nextState,
+                  target: 'BOTH',
+                  device: dev,
+                  topicPrefix: appState.settings.mqttTopicPrefix,
+                  reason: 'DOMOTIQUE_RACK_TOGGLE',
+                });
+              } else {
+                mqttGateway.publish(dev.relayTopic + '/set', nextState);
+              }
 
               setAppState(prev => ({
                 ...prev,
+                stations: dev.stationId
+                  ? prev.stations.map((st) =>
+                      st.id === dev.stationId
+                        ? {
+                            ...st,
+                            relayState: nextState === 'ON',
+                            screenRelayState: nextState === 'ON',
+                            currentWatts: nextState === 'ON' ? getConsoleWatts(st.type) : 0,
+                          }
+                        : st
+                    )
+                  : prev.stations,
                 domotiqueDevices: prev.domotiqueDevices.map((d) => {
                   if (d.id !== deviceId) return d;
                   const linkedSt = d.stationId ? prev.stations.find((s) => s.id === d.stationId) : undefined;
@@ -3385,7 +4062,13 @@ export default function App() {
         )}
 
         {/* Onglet 8 : Guide Matériel & Plan de Tests */}
-        {activeTab === 'guide' && <HardwareGuideModal />}
+        {activeTab === 'guide' && (
+          <HardwareGuideModal
+            settings={appState.settings}
+            stations={appState.stations}
+            devices={appState.domotiqueDevices}
+          />
+        )}
 
         {/* Onglet 9 : Portail Client Dédié (2.13 b) */}
         {activeTab === 'customer_portal' && (
@@ -3464,6 +4147,8 @@ export default function App() {
         )}
           </>
       </main>
+        </div>
+      </div>
 
       {/* Modal Express Ticket (< 15s) avec remises automatiques selon statut */}
       <FastTicketModal
@@ -3900,6 +4585,53 @@ export default function App() {
           setFirstLoginPromptUser(null);
         }}
       />
+
+      {/* Modal de Confirmation In-App (remplace window.confirm bloqué dans l'iframe) */}
+      {confirmModal && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+          <div className={`bg-slate-900 border ${confirmModal.danger ? 'border-rose-500/70' : 'border-slate-700'} rounded-2xl w-full max-w-md p-6 space-y-4 shadow-2xl`}>
+            <div className="flex items-start gap-3">
+              <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${confirmModal.danger ? 'bg-rose-500/15 border border-rose-500/40 text-rose-400' : 'bg-blue-500/15 border border-blue-500/40 text-blue-400'}`}>
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-base font-bold text-white">{confirmModal.title}</h3>
+                <p className="text-xs text-slate-300 mt-1 leading-relaxed">{confirmModal.message}</p>
+                {confirmModal.details && (
+                  <p className="text-[11px] text-slate-400 mt-2 bg-slate-950/70 border border-slate-800 rounded-lg p-2.5">
+                    {confirmModal.details}
+                  </p>
+                )}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setConfirmModal(null)}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-xl transition cursor-pointer"
+              >
+                Annuler
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const action = confirmModal.onConfirm;
+                  setConfirmModal(null);
+                  action();
+                }}
+                className={`px-4 py-2 text-white text-xs font-bold rounded-xl shadow-lg transition cursor-pointer ${
+                  confirmModal.danger
+                    ? 'bg-rose-600 hover:bg-rose-500 shadow-rose-600/30'
+                    : 'bg-blue-600 hover:bg-blue-500 shadow-blue-600/30'
+                }`}
+              >
+                {confirmModal.confirmLabel}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -15,7 +15,7 @@ import {
   RotateCcw,
 } from 'lucide-react';
 import { StaffUser, SystemSettings } from '../types';
-import { compressProfileImage, compressBackgroundImage } from '../utils/imageResize';
+import { compressProfileImage, compressBackgroundImage, PROFILE_IMAGE_ACCEPT } from '../utils/imageResize';
 import { DEFAULT_PAGE_BACKGROUND_URL, DEFAULT_PAGE_BACKGROUND_OPACITY } from '../services/storage';
 
 interface MyProfileModalProps {
@@ -252,10 +252,10 @@ export const MyProfileModal: React.FC<MyProfileModalProps> = ({
                 <img
                   src={avatarUrl}
                   alt={currentStaffUser.fullName}
-                  className="w-16 h-16 rounded-2xl object-cover border-2 border-cyan-500/60 shadow-lg"
+                  className="w-16 h-16 rounded-full object-cover border-2 border-cyan-500/60 shadow-lg"
                 />
               ) : (
-                <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-600 to-cyan-500 flex items-center justify-center text-white font-black text-xl border-2 border-slate-700">
+                <div className="w-16 h-16 rounded-full bg-gradient-to-br from-blue-600 to-cyan-500 flex items-center justify-center text-white font-black text-xl border-2 border-slate-700">
                   {currentStaffUser.fullName.charAt(0).toUpperCase()}
                 </div>
               )}
@@ -265,14 +265,14 @@ export const MyProfileModal: React.FC<MyProfileModalProps> = ({
               <div>
                 <div className="font-bold text-white">Photo de profil</div>
                 <p className="text-[10px] text-slate-400">
-                  PNG, JPG ou WebP · Recadrée et compressée automatiquement.
+                  JPG, PNG, WebP, GIF, AVIF, BMP, SVG, TIFF… · Recadrée en rond automatiquement.
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept="image/*"
+                  accept={PROFILE_IMAGE_ACCEPT}
                   onChange={handlePhotoSelect}
                   className="hidden"
                 />
@@ -350,7 +350,7 @@ export const MyProfileModal: React.FC<MyProfileModalProps> = ({
                         setSuccessMsg("Image d'arrière-plan par défaut rétablie !");
                       }}
                       className="px-2 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded-lg font-semibold flex items-center gap-1 transition cursor-pointer"
-                      title="Rétablir l'image Kin Gaming Hub par défaut"
+                      title="Rétablir l'image GOZA par défaut"
                     >
                       <RotateCcw className="w-3 h-3 text-amber-400" />
                       <span>Défaut</span>

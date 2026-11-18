@@ -27,6 +27,8 @@ import {
   TimeSlotPricingRule,
 } from '../types';
 import { DEFAULT_TIER_RULES, getISOWeekKey } from './tierEngine';
+import { generateUniqueReferralCode, isValidReferralCodeFormat } from './referralCode';
+import gozaLoginArenaImg from '../assets/images/goza_login_arena_1794933158260.jpg';
 
 const STORAGE_KEY = 'kin_gaming_hub_v2';
 
@@ -135,25 +137,25 @@ export const DEFAULT_PAYMENT_METHODS_CONFIG: Record<PaymentMethod, PaymentMethod
     enabled: true,
     requireReference: true,
     accountDisplayNumber: '1002345001 (Rawbank)',
-    accountName: 'KIN GAMING HUB SARL',
+    accountName: 'GOZA SARL',
   },
   MPESA: {
     enabled: true,
     requireReference: true,
     accountDisplayNumber: '+243 81 234 5678',
-    accountName: 'Kin Gaming Hub Vodacom',
+    accountName: 'GOZA Vodacom',
   },
   ORANGE_MONEY: {
     enabled: true,
     requireReference: true,
     accountDisplayNumber: '+243 89 545 7097',
-    accountName: 'Kin Gaming Hub Orange',
+    accountName: 'GOZA Orange',
   },
   AIRTEL_MONEY: {
     enabled: true,
     requireReference: true,
     accountDisplayNumber: '+243 97 123 4567',
-    accountName: 'Kin Gaming Hub Airtel',
+    accountName: 'GOZA Airtel',
   },
   LOYALTY_POINTS: {
     enabled: true,
@@ -177,8 +179,7 @@ export const DEFAULT_LIGHTING_SCHEDULE: LightingACSchedule = {
   lightOffTime: '23:45',
 };
 
-export const DEFAULT_PAGE_BACKGROUND_URL =
-  '/assets/aistudio/Kin_Gaming_Hub___univers_ne_on_des_jeux_vide_o_220341d3.png';
+export const DEFAULT_PAGE_BACKGROUND_URL = gozaLoginArenaImg;
 export const DEFAULT_PAGE_BACKGROUND_OPACITY = 0.16;
 
 export const DEFAULT_SETTINGS: SystemSettings = {
@@ -235,6 +236,7 @@ export const DEFAULT_SETTINGS: SystemSettings = {
   warningBeforeCutMinutes: 5,
   soundAlertsEnabled: true,
   voiceAlertsEnabled: true,
+  voiceGender: 'FEMALE',
   mqttBrokerHost: '192.168.1.100',
   mqttBrokerPort: 1883,
   mqttUsername: 'gaminghub_operator',
@@ -244,21 +246,23 @@ export const DEFAULT_SETTINGS: SystemSettings = {
   autoPowerOffAtSessionEnd: true,
   autoReleaseGraceSeconds: 120, // 2 minutes de grâce avant extinction domotique
   autoCutTarget: 'SCREEN_ONLY', // Couper l'écran seulement par défaut (préserve console)
+  shellyExemptPs4StationId: 1, // 1 poste PS4 exempté du déclenchement Shelly automatique sur ticket
+  shellyExemptPs5StationId: 9, // 1 poste PS5 exempté du déclenchement Shelly automatique sur ticket
   lightingACSchedule: DEFAULT_LIGHTING_SCHEDULE,
 
   // Section 9: Salle et tickets
-  venueName: 'Kin Gaming Hub',
+  venueName: 'GOZA',
   venueLogoUrl: '',
   pageBackgroundUrl: DEFAULT_PAGE_BACKGROUND_URL,
   pageBackgroundOpacity: DEFAULT_PAGE_BACKGROUND_OPACITY,
   venueAddress: '12, Boulevard du 30 Juin, Gombe, Kinshasa, RDC',
   venuePhone: '+243 89 545 7097',
-  receiptFooterMessage: 'Merci de votre visite ! Suivez-nous sur Instagram @kingaminghub · Wi-Fi Client : KinGamingHub-Guest',
+  receiptFooterMessage: 'Merci de votre visite chez GOZA ! Suivez-nous sur Instagram @gozagaming · Wi-Fi Client : GOZA-Guest',
   receiptLegalNotice: 'RCCM : CD/KIN/RCCM/2026-B-1284 · Id.Nat : 01-93-N48201E · NIF : A2049182Z',
   receiptPaperSize: '58mm',
-  ticketPrefix: 'KGH',
+  ticketPrefix: 'GOZA',
   ticketNumberFormat: 'DAILY_RESET',
-  publicVerificationBaseUrl: typeof window !== 'undefined' ? window.location.origin : 'https://kingaminghub.cd',
+  publicVerificationBaseUrl: typeof window !== 'undefined' ? window.location.origin : 'https://goza.cd',
   qrCodeFallbackMode: 'URL',
   operatingHours: { open: '09:00', close: '23:00' },
   timezone: 'Africa/Kinshasa',
@@ -332,6 +336,7 @@ export const DEFAULT_SETTINGS_BY_SECTION = {
     warningBeforeCutMinutes: 5,
     soundAlertsEnabled: true,
     voiceAlertsEnabled: true,
+    voiceGender: 'FEMALE' as const,
     mqttBrokerHost: '192.168.1.100',
     mqttBrokerPort: 1883,
     mqttUsername: 'gaminghub_operator',
@@ -341,21 +346,23 @@ export const DEFAULT_SETTINGS_BY_SECTION = {
     autoPowerOffAtSessionEnd: true,
     autoReleaseGraceSeconds: 120,
     autoCutTarget: 'SCREEN_ONLY' as const,
+    shellyExemptPs4StationId: 1,
+    shellyExemptPs5StationId: 9,
     lightingACSchedule: DEFAULT_LIGHTING_SCHEDULE,
   },
   venue: {
-    venueName: 'Kin Gaming Hub',
+    venueName: 'GOZA',
     venueLogoUrl: '',
     pageBackgroundUrl: DEFAULT_PAGE_BACKGROUND_URL,
     pageBackgroundOpacity: DEFAULT_PAGE_BACKGROUND_OPACITY,
     venueAddress: '12, Boulevard du 30 Juin, Gombe, Kinshasa, RDC',
     venuePhone: '+243 89 545 7097',
-    receiptFooterMessage: 'Merci de votre visite ! Suivez-nous sur Instagram @kingaminghub · Wi-Fi Client : KinGamingHub-Guest',
+    receiptFooterMessage: 'Merci de votre visite chez GOZA ! Suivez-nous sur Instagram @gozagaming · Wi-Fi Client : GOZA-Guest',
     receiptLegalNotice: 'RCCM : CD/KIN/RCCM/2026-B-1284 · Id.Nat : 01-93-N48201E · NIF : A2049182Z',
     receiptPaperSize: '58mm' as const,
-    ticketPrefix: 'KGH',
+    ticketPrefix: 'GOZA',
     ticketNumberFormat: 'DAILY_RESET' as const,
-    publicVerificationBaseUrl: typeof window !== 'undefined' ? window.location.origin : 'https://kingaminghub.cd',
+    publicVerificationBaseUrl: typeof window !== 'undefined' ? window.location.origin : 'https://goza.cd',
     qrCodeFallbackMode: 'URL' as const,
     operatingHours: { open: '09:00', close: '23:00' },
     timezone: 'Africa/Kinshasa',
@@ -544,7 +551,7 @@ const INITIAL_CLIENTS: Client[] = [
     tier: 'VIP',
     tierPromotedAt: now - 15 * oneDay,
     sessionsHistory: createGlodySessions(),
-    referralCode: 'GLODY243',
+    referralCode: 'GL243',
     referralCount: 4,
     totalReferralBonusPoints: 450,
     dataConsentAccepted: true,
@@ -568,7 +575,7 @@ const INITIAL_CLIENTS: Client[] = [
     tier: 'FIDELE',
     tierPromotedAt: now - 8 * oneDay,
     sessionsHistory: createFallySessions(),
-    referralCode: 'FALLY243',
+    referralCode: 'FA243',
     referralCount: 2,
     totalReferralBonusPoints: 200,
     dataConsentAccepted: true,
@@ -591,7 +598,7 @@ const INITIAL_CLIENTS: Client[] = [
     tier: 'REGULIER',
     tierPromotedAt: now - 2 * oneDay,
     sessionsHistory: createJuniorSessions(),
-    referralCode: 'JUNIOR243',
+    referralCode: 'JN243',
     referredById: 'cli-2',
     referredByName: 'Fally Mutombo',
     referralCount: 1,
@@ -626,7 +633,7 @@ const INITIAL_CLIENTS: Client[] = [
         weekNumberYear: getISOWeekKey(new Date(now - 4 * oneDay)),
       },
     ],
-    referralCode: 'CEDRICK243',
+    referralCode: 'CD243',
     referredById: 'cli-1',
     referredByName: 'Glody Tshisekedi',
     referralCount: 0,
@@ -918,7 +925,7 @@ const INITIAL_DOMOTIQUE: DomotiqueDevice[] = [
       watts: id === 1 ? 142.5 : id === 2 ? 128 : id === 9 ? 215.4 : 0,
       totalKWh: id === 1 ? 18.4 : id === 2 ? 14.2 : id === 9 ? 24.6 : 10.0 + id,
       isOnline: true,
-      hardwareType: (id % 2 === 0 ? 'SHELLY_1PM' : 'SONOFF_S26') as ('SHELLY_1PM' | 'SONOFF_S26'),
+      hardwareType: 'SHELLY_1PM' as const,
       ipAddress: `192.168.1.${120 + id}`,
     };
   }),
@@ -1097,12 +1104,39 @@ export function loadAppState(): AppState {
     if (parsed.settings && parsed.settings.voiceAlertsEnabled === undefined) {
       parsed.settings.voiceAlertsEnabled = true;
     }
+    if (parsed.settings && !parsed.settings.voiceGender) {
+      parsed.settings.voiceGender = 'FEMALE';
+    }
+    if (parsed.whatsappConfig && !parsed.whatsappConfig.provider) {
+      parsed.whatsappConfig.provider = 'META_CLOUD';
+    }
     // Migration: s'assurer que les tickets existants ont un signedToken
     if (parsed.tickets) {
       parsed.tickets = parsed.tickets.map(t => ({
         ...t,
         signedToken: t.signedToken || `kgh_tok_${Math.random().toString(36).substring(2, 12)}_${t.stationId}`,
       }));
+    }
+    // Migration: normaliser les codes parrains existants (max 5 caractères alphanumériques uniques, chiffres + lettres)
+    if (Array.isArray(parsed.clients)) {
+      const legacyCodeMap: Record<string, string> = {
+        GLODY243: 'GL243',
+        FALLY243: 'FA243',
+        JUNIOR243: 'JN243',
+        CEDRICK243: 'CD243',
+      };
+      const seenCodes = new Set<string>();
+      const migratedClients: Client[] = [];
+      for (const cli of parsed.clients) {
+        const raw = (cli.referralCode || '').trim().toUpperCase();
+        let nextCode = legacyCodeMap[raw] || raw;
+        if (!isValidReferralCodeFormat(nextCode) || seenCodes.has(nextCode)) {
+          nextCode = generateUniqueReferralCode(cli.fullName, migratedClients);
+        }
+        seenCodes.add(nextCode);
+        migratedClients.push({ ...cli, referralCode: nextCode });
+      }
+      parsed.clients = migratedClients;
     }
     // Migration: s'assurer que les utilisateurs existants sans changement de mot de passe ont mustChangePassword: true
     if (parsed.staffUsers) {
@@ -1127,13 +1161,61 @@ export function loadAppState(): AppState {
     }
     // Migration: synchroniser et fusionner avec DEFAULT_SETTINGS pour garantir tous les champs des 11 sections
     if (parsed.settings) {
+      const migratedVenueName =
+        !parsed.settings.venueName || parsed.settings.venueName === 'Kin Gaming Hub'
+          ? 'GOZA'
+          : parsed.settings.venueName;
+      const migratedTicketPrefix =
+        !parsed.settings.ticketPrefix || parsed.settings.ticketPrefix === 'KGH'
+          ? 'GOZA'
+          : parsed.settings.ticketPrefix;
+      const migratedFooter =
+        parsed.settings.receiptFooterMessage &&
+        (parsed.settings.receiptFooterMessage.includes('KinGamingHub') ||
+          parsed.settings.receiptFooterMessage.includes('@kingaminghub'))
+          ? DEFAULT_SETTINGS.receiptFooterMessage
+          : parsed.settings.receiptFooterMessage || DEFAULT_SETTINGS.receiptFooterMessage;
+
+      const rawPayCfg = parsed.settings.paymentMethodsConfig || {};
+      const migratedPayCfg = {
+        ...DEFAULT_SETTINGS.paymentMethodsConfig,
+        ...rawPayCfg,
+      };
+      if (migratedPayCfg.ILLICO_CASH?.accountName === 'KIN GAMING HUB SARL') {
+        migratedPayCfg.ILLICO_CASH = { ...migratedPayCfg.ILLICO_CASH, accountName: 'GOZA SARL' };
+      }
+      if (migratedPayCfg.MPESA?.accountName === 'Kin Gaming Hub Vodacom') {
+        migratedPayCfg.MPESA = { ...migratedPayCfg.MPESA, accountName: 'GOZA Vodacom' };
+      }
+      if (migratedPayCfg.ORANGE_MONEY?.accountName === 'Kin Gaming Hub Orange') {
+        migratedPayCfg.ORANGE_MONEY = { ...migratedPayCfg.ORANGE_MONEY, accountName: 'GOZA Orange' };
+      }
+      if (migratedPayCfg.AIRTEL_MONEY?.accountName === 'Kin Gaming Hub Airtel') {
+        migratedPayCfg.AIRTEL_MONEY = { ...migratedPayCfg.AIRTEL_MONEY, accountName: 'GOZA Airtel' };
+      }
+
+      const legacyBg = '/assets/aistudio/Kin_Gaming_Hub___univers_ne_on_des_jeux_vide_o_220341d3.png';
+      const migratedBgUrl =
+        !parsed.settings.pageBackgroundUrl || parsed.settings.pageBackgroundUrl === legacyBg
+          ? DEFAULT_PAGE_BACKGROUND_URL
+          : parsed.settings.pageBackgroundUrl;
+
       parsed.settings = {
         ...DEFAULT_SETTINGS,
         ...parsed.settings,
-        paymentMethodsConfig: {
-          ...DEFAULT_SETTINGS.paymentMethodsConfig,
-          ...(parsed.settings.paymentMethodsConfig || {}),
-        },
+        venueName: migratedVenueName,
+        ticketPrefix: migratedTicketPrefix,
+        receiptFooterMessage: migratedFooter,
+        pageBackgroundUrl: migratedBgUrl,
+        shellyExemptPs4StationId:
+          parsed.settings.shellyExemptPs4StationId !== undefined
+            ? parsed.settings.shellyExemptPs4StationId
+            : DEFAULT_SETTINGS.shellyExemptPs4StationId,
+        shellyExemptPs5StationId:
+          parsed.settings.shellyExemptPs5StationId !== undefined
+            ? parsed.settings.shellyExemptPs5StationId
+            : DEFAULT_SETTINGS.shellyExemptPs5StationId,
+        paymentMethodsConfig: migratedPayCfg,
         overtimeRatePerMinuteCDF: {
           ...DEFAULT_SETTINGS.overtimeRatePerMinuteCDF,
           ...(parsed.settings.overtimeRatePerMinuteCDF || {}),
@@ -1153,6 +1235,33 @@ export function loadAppState(): AppState {
     } else {
       parsed.settings = DEFAULT_SETTINGS;
     }
+
+    // S'assurer qu'aucun poste non-exempté sans ticket actif ne reste allumé automatiquement au démarrage
+    const exemptIds = new Set<number>();
+    if (typeof parsed.settings.shellyExemptPs4StationId === 'number') {
+      exemptIds.add(parsed.settings.shellyExemptPs4StationId);
+    }
+    if (typeof parsed.settings.shellyExemptPs5StationId === 'number') {
+      exemptIds.add(parsed.settings.shellyExemptPs5StationId);
+    }
+    parsed.stations = parsed.stations.map((st) => {
+      if (!exemptIds.has(st.id) && st.status !== 'occupied' && st.relayState) {
+        return { ...st, relayState: false, screenRelayState: false, currentWatts: 0 };
+      }
+      return st;
+    });
+    if (Array.isArray(parsed.domotiqueDevices)) {
+      const stationStatusById = new Map(parsed.stations.map((s) => [s.id, s]));
+      parsed.domotiqueDevices = parsed.domotiqueDevices.map((dev) => {
+        if (!dev.stationId) return dev;
+        const st = stationStatusById.get(dev.stationId);
+        if (st && !exemptIds.has(st.id) && st.status !== 'occupied' && dev.state === 'ON') {
+          return { ...dev, state: 'OFF' as const, watts: 0 };
+        }
+        return dev;
+      });
+    }
+
     return parsed;
   } catch {
     const initial = createInitialState();
@@ -1287,6 +1396,7 @@ function createInitialState(): AppState {
     tierHistory: INITIAL_TIER_HISTORY,
     activeCustomerPortalClientId: null,
     whatsappConfig: {
+      provider: 'META_CLOUD',
       phoneNumberId: '109876543210987',
       businessAccountId: '234567890123456',
       accessToken: 'EAAG...',
@@ -1294,6 +1404,9 @@ function createInitialState(): AppState {
       verifyToken: 'kin_gaming_hub_secure_token_2026',
       isTestMode: true,
       testPhoneNumber: '+243895457097',
+      callmebotApiKey: '',
+      customWebhookUrl: '',
+      customWebhookToken: '',
       optInRequired: true,
       autoNotifyQueueTurn: true,
       autoNotifyQueueApproaching: true,

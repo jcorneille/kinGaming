@@ -252,7 +252,7 @@ export const QueueView: React.FC<QueueViewProps> = ({
             // Lien WhatsApp prêt
             const cleanPhone = entry.phone.replace(/[^0-9]/g, '');
             const whatsappUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(
-              `Bonjour ${entry.clientName}, votre poste de jeu est prêt à Kin Gaming Hub ! Veuillez vous présenter à l'accueil.`
+              `Bonjour ${entry.clientName}, votre poste de jeu est prêt chez GOZA ! Veuillez vous présenter à l'accueil.`
             )}`;
 
             return (

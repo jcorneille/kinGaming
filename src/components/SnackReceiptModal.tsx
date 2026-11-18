@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { X, Printer, CheckCircle2, ShoppingBag } from 'lucide-react';
+import { X, Printer, ShoppingBag } from 'lucide-react';
 import { SnackSale, SystemSettings } from '../types';
 import { printThermalReceiptElement } from '../utils/thermalPrint';
 
@@ -16,7 +16,6 @@ export const SnackReceiptModal: React.FC<SnackReceiptModalProps> = ({
 }) => {
   const printAreaRef = useRef<HTMLDivElement | null>(null);
   const [paperSize, setPaperSize] = useState<'58mm' | '80mm'>(settings?.receiptPaperSize || '80mm');
-  const [printFeedback, setPrintFeedback] = useState<string | null>(null);
 
   if (!sale) return null;
 
@@ -74,8 +73,7 @@ export const SnackReceiptModal: React.FC<SnackReceiptModalProps> = ({
       `Reçu Boissons & Snacks ${receiptNo}`
     );
     if (ok) {
-      setPrintFeedback(`Impression lancée (format thermique ${paperSize})`);
-      setTimeout(() => setPrintFeedback(null), 3500);
+      onClose();
     }
   };
 
@@ -115,13 +113,6 @@ export const SnackReceiptModal: React.FC<SnackReceiptModalProps> = ({
           </div>
         </div>
 
-        {printFeedback && (
-          <div className="px-3.5 py-2 bg-emerald-500/20 border-b border-emerald-500/30 text-emerald-300 text-[11px] flex items-center gap-1.5">
-            <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
-            <span>{printFeedback}</span>
-          </div>
-        )}
-
         {/* Aperçu Reçu Thermique */}
         <div className="p-4 bg-slate-950 flex justify-center overflow-y-auto max-h-[70vh]">
           <div
@@ -134,7 +125,7 @@ export const SnackReceiptModal: React.FC<SnackReceiptModalProps> = ({
             {/* En-tête Salle */}
             <div className="text-center pb-2 border-b border-dashed border-neutral-400">
               <h1 className="font-extrabold text-sm tracking-wider uppercase">
-                {settings?.venueName || 'KIN GAMING HUB'}
+                {settings?.venueName || 'GOZA'}
               </h1>
               <p className="text-[10px] text-neutral-600">Snack-Bar & Boissons</p>
               <p className="text-[9px] text-neutral-500">
@@ -236,7 +227,7 @@ export const SnackReceiptModal: React.FC<SnackReceiptModalProps> = ({
             {/* Pied de reçu */}
             <div className="text-center pt-2 text-[9px] text-neutral-600 space-y-1">
               <p className="font-semibold">
-                {settings?.receiptFooterMessage || 'Merci pour votre visite à Kin Gaming Hub !'}
+                {settings?.receiptFooterMessage || 'Merci pour votre visite chez GOZA !'}
               </p>
               {settings?.receiptLegalNotice && (
                 <p className="text-[8px] text-neutral-500 font-mono leading-none">

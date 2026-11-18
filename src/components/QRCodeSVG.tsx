@@ -19,7 +19,7 @@ export const QRCodeSVG: React.FC<QRCodeSVGProps> = ({
   bgColor = '#ffffff',
 }) => {
   const { moduleCount, pathData } = useMemo(() => {
-    const safeValue = value && value.trim().length > 0 ? value : 'https://kingaminghub.cd';
+    const safeValue = value && value.trim().length > 0 ? value : 'https://goza.cd';
     try {
       const qr = QRCode.create(safeValue, { errorCorrectionLevel: 'M' });
       const count = qr.modules.size;

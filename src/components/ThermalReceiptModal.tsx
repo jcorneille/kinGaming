@@ -21,7 +21,6 @@ export const ThermalReceiptModal: React.FC<ThermalReceiptModalProps> = ({
 }) => {
   const printAreaRef = useRef<HTMLDivElement | null>(null);
   const [paperSize, setPaperSize] = useState<'58mm' | '80mm'>(settings?.receiptPaperSize || '80mm');
-  const [printFeedback, setPrintFeedback] = useState<string | null>(null);
 
   if (!ticket) return null;
 
@@ -29,11 +28,10 @@ export const ThermalReceiptModal: React.FC<ThermalReceiptModalProps> = ({
     const ok = printThermalReceiptElement(
       printAreaRef.current,
       paperSize,
-      `Ticket ${ticket.ticketNumber} - ${settings?.venueName || 'Kin Gaming Hub'}`
+      `Ticket ${ticket.ticketNumber} - ${settings?.venueName || 'GOZA'}`
     );
     if (ok) {
-      setPrintFeedback(`Impression lancée (format thermique ${paperSize})`);
-      setTimeout(() => setPrintFeedback(null), 3500);
+      onClose();
     }
   };
 
@@ -47,14 +45,14 @@ export const ThermalReceiptModal: React.FC<ThermalReceiptModalProps> = ({
     return d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
   };
 
-  const baseUrl = publicBaseUrl || (typeof window !== 'undefined' ? window.location.origin : 'https://kingaminghub.cd');
-  const ticketToken = ticket.signedToken || `kgh_tok_${ticket.id}`;
+  const baseUrl = publicBaseUrl || (typeof window !== 'undefined' ? window.location.origin : 'https://goza.cd');
+  const ticketToken = ticket.signedToken || `goza_tok_${ticket.id}`;
   
   // URL publique de vérification en direct sans connexion
   const verificationUrl = `${baseUrl}/t/${ticketToken}`;
 
   // Texte offline de secours si pas de domaine public
-  const offlineText = `KIN GAMING HUB - TICKET OFFICIEL
+  const offlineText = `GOZA - TICKET OFFICIEL
 Ticket N°: ${ticket.ticketNumber}
 Poste: ${ticket.stationId} (${ticket.stationType})
 Début: ${formatTime(ticket.startTime)} | Fin: ${formatTime(ticket.endTime)}
@@ -122,13 +120,6 @@ Statut: Actif / Validé`;
           </div>
         </div>
 
-        {printFeedback && (
-          <div className="px-3.5 py-2 bg-emerald-500/20 border-b border-emerald-500/30 text-emerald-300 text-[11px] flex items-center gap-1.5">
-            <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
-            <span>{printFeedback}</span>
-          </div>
-        )}
-
         {/* Aperçu du Ticket Thermique 58mm / 80mm */}
         <div className="p-4 bg-slate-950 flex justify-center overflow-y-auto max-h-[70vh]">
           <div
@@ -141,7 +132,7 @@ Statut: Actif / Validé`;
             {/* Logo / Header */}
             <div className="text-center pb-2 border-b border-dashed border-neutral-400">
               <h1 className="font-extrabold text-sm tracking-wider uppercase">
-                {settings?.venueName || 'KIN GAMING HUB'}
+                {settings?.venueName || 'GOZA'}
               </h1>
               <p className="text-[10px] text-neutral-600">Salle de Jeux Vidéo & eSports</p>
               <p className="text-[9px] text-neutral-500">

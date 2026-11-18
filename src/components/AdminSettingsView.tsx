@@ -1487,7 +1487,7 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
                                 applyBackgroundImmediately(
                                   DEFAULT_PAGE_BACKGROUND_URL,
                                   DEFAULT_PAGE_BACKGROUND_OPACITY,
-                                  "Image d'arrière-plan Kin Gaming Hub par défaut rétablie."
+                                  "Image d'arrière-plan GOZA par défaut rétablie."
                                 )
                               }
                               className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl font-semibold flex items-center gap-1.5 transition cursor-pointer"
@@ -3191,26 +3191,117 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
                       </label>
                     </div>
 
-                    <div className="pt-2 border-t border-slate-700/60 flex flex-wrap items-center justify-between gap-2">
-                      <div className="text-[11px] text-slate-400">
-                        {voiceTestResult || 'Testez le carillon + la synthèse vocale française sur cet appareil.'}
+                    {/* Règle d'exemption Shelly : 2 postes exemptés (1 PS4 + 1 PS5) */}
+                    <div className="p-3.5 bg-slate-900/70 border border-amber-500/30 rounded-xl space-y-2.5 text-xs">
+                      <div>
+                        <div className="font-bold text-amber-300">
+                          Postes exemptés du déclenchement Shelly automatique (1 PS4 + 1 PS5)
+                        </div>
+                        <p className="text-[11px] text-slate-400">
+                          Le relais Shelly ne s&apos;enclenche automatiquement que lorsqu&apos;un ticket est généré sur son poste, sauf ces 2 postes qui restent en contrôle manuel.
+                        </p>
                       </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div>
+                          <label className="text-[11px] text-amber-200 block mb-1">1 Poste PS4 Exempté</label>
+                          <select
+                            value={draftSettings.shellyExemptPs4StationId ?? ''}
+                            onChange={(e) =>
+                              setDraftSettings({
+                                ...draftSettings,
+                                shellyExemptPs4StationId: e.target.value ? Number(e.target.value) : null,
+                              })
+                            }
+                            className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white text-xs"
+                          >
+                            <option value="">Aucun poste PS4 exempté</option>
+                            {(stations || [])
+                              .filter((s) => !isHighTierConsole(s.type))
+                              .map((s) => (
+                                <option key={s.id} value={s.id}>
+                                  Poste {s.id} ({getConsoleLabel(s.type)})
+                                </option>
+                              ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-[11px] text-cyan-200 block mb-1">1 Poste PS5 Exempté</label>
+                          <select
+                            value={draftSettings.shellyExemptPs5StationId ?? ''}
+                            onChange={(e) =>
+                              setDraftSettings({
+                                ...draftSettings,
+                                shellyExemptPs5StationId: e.target.value ? Number(e.target.value) : null,
+                              })
+                            }
+                            className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white text-xs"
+                          >
+                            <option value="">Aucun poste PS5 exempté</option>
+                            {(stations || [])
+                              .filter((s) => isHighTierConsole(s.type))
+                              .map((s) => (
+                                <option key={s.id} value={s.id}>
+                                  Poste {s.id} ({getConsoleLabel(s.type)})
+                                </option>
+                              ))}
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="pt-3 border-t border-slate-700/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div className="flex flex-wrap items-center gap-2 text-xs">
+                        <span className="text-slate-300 font-semibold">Timbre de voix parlante :</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setDraftSettings({ ...draftSettings, voiceGender: 'FEMALE' });
+                            soundService.setVoiceGender('FEMALE');
+                          }}
+                          className={`px-3 py-1.5 rounded-lg font-bold border transition cursor-pointer ${
+                            (draftSettings.voiceGender || 'FEMALE') === 'FEMALE'
+                              ? 'bg-pink-500/20 border-pink-400 text-pink-200'
+                              : 'bg-slate-900 border-slate-700 text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          Voix Féminine (Humaine)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setDraftSettings({ ...draftSettings, voiceGender: 'MALE' });
+                            soundService.setVoiceGender('MALE');
+                          }}
+                          className={`px-3 py-1.5 rounded-lg font-bold border transition cursor-pointer ${
+                            draftSettings.voiceGender === 'MALE'
+                              ? 'bg-blue-500/20 border-blue-400 text-blue-200'
+                              : 'bg-slate-900 border-slate-700 text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          Voix Masculine (Humaine)
+                        </button>
+                      </div>
+
                       <button
                         type="button"
                         onClick={() => {
-                          const diag = soundService.playTestVoiceAndSound();
+                          const g = draftSettings.voiceGender || 'FEMALE';
+                          const diag = soundService.playTestVoiceAndSound(g);
                           setVoiceTestResult(
-                            diag.supported
-                              ? `Test lancé (${diag.frenchVoiceName ? `Voix : ${diag.frenchVoiceName}` : 'Synthèse vocale FR système active'}).`
-                              : 'Synthèse vocale non prise en charge par ce navigateur (bips sonores actifs).'
+                            `Test lancé (${g === 'MALE' ? 'Voix Masculine' : 'Voix Féminine'} · Gemini TTS / Voix FR${
+                              diag.frenchVoiceName ? ` : ${diag.frenchVoiceName}` : ''
+                            }).`
                           );
                         }}
-                        className="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white font-bold rounded-lg text-xs flex items-center gap-1.5 cursor-pointer transition"
+                        className="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white font-bold rounded-lg text-xs flex items-center gap-1.5 cursor-pointer transition shrink-0"
                       >
                         <Volume2 className="w-3.5 h-3.5" />
                         <span>Tester l'alerte parlante &amp; son</span>
                       </button>
                     </div>
+                    {voiceTestResult && (
+                      <div className="text-[11px] text-cyan-300 pt-1">{voiceTestResult}</div>
+                    )}
                   </div>
                 </div>
               )}
@@ -3419,7 +3510,7 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
                                 applyBackgroundImmediately(
                                   DEFAULT_PAGE_BACKGROUND_URL,
                                   DEFAULT_PAGE_BACKGROUND_OPACITY,
-                                  "Image d'arrière-plan Kin Gaming Hub par défaut rétablie."
+                                  "Image d'arrière-plan GOZA par défaut rétablie."
                                 )
                               }
                               className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-semibold flex items-center gap-1.5 transition cursor-pointer"
@@ -3632,10 +3723,12 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
                                   setSaveSuccessNotification('Configuration importée et restaurée avec succès !');
                                   setTimeout(() => setSaveSuccessNotification(null), 3500);
                                 } else {
-                                  alert('Le fichier importé n\'est pas un fichier de configuration valide Kin Gaming Hub.');
+                                  setSaveSuccessNotification('Erreur : le fichier importé n\'est pas une configuration valide GOZA.');
+                                  setTimeout(() => setSaveSuccessNotification(null), 4000);
                                 }
                               } catch {
-                                alert('Erreur de lecture du fichier JSON.');
+                                setSaveSuccessNotification('Erreur de lecture du fichier JSON.');
+                                setTimeout(() => setSaveSuccessNotification(null), 4000);
                               }
                             };
                             reader.readAsText(file);

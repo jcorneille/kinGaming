@@ -23,6 +23,20 @@ import {
 import { DEFAULT_TIER_RULES } from '../services/tierEngine';
 import { computeDynamicTicketPrice, isPromotionEligible } from '../services/pricingEngine';
 import { getConsoleLabel, getFallbackBaseType, isHighTierConsole } from '../services/consoleCatalog';
+import {
+  MINIMUM_REGISTRATION_TICKET_MINUTES,
+  normalizeReferralCodeInput,
+  isValidReferralCodeFormat,
+  phonesMatch,
+  normalizePhoneDigits,
+} from '../services/referralCode';
+
+export interface NewClientTicketRegistration {
+  fullName: string;
+  phone: string;
+  email?: string;
+  sponsorCode?: string;
+}
 
 interface FastTicketModalProps {
   isOpen: boolean;
@@ -36,7 +50,12 @@ interface FastTicketModalProps {
   exchangeRate: number;
   cashierName: string;
   cashierId?: string;
-  onConfirmTicket: (ticket: Ticket, selectedClient?: Client, payWithPoints?: boolean) => void;
+  onConfirmTicket: (
+    ticket: Ticket,
+    selectedClient?: Client,
+    payWithPoints?: boolean,
+    newClientRegistration?: NewClientTicketRegistration
+  ) => void;
 }
 
 type MixedElecChannel = 'NONE' | 'ILLICO_CASH' | 'MPESA' | 'ORANGE_MONEY' | 'AIRTEL_MONEY';
@@ -79,6 +98,13 @@ export const FastTicketModal: React.FC<FastTicketModalProps> = ({
 
   const [validationError, setValidationError] = useState<string>('');
 
+  // Inscription nouveau client directe (éligible uniquement pour ticket >= 3H / 180 min)
+  const [registerNewClient, setRegisterNewClient] = useState<boolean>(false);
+  const [regFullName, setRegFullName] = useState<string>('');
+  const [regPhone, setRegPhone] = useState<string>('+243 ');
+  const [regEmail, setRegEmail] = useState<string>('');
+  const [regSponsorCode, setRegSponsorCode] = useState<string>('');
+
   useEffect(() => {
     if (station) {
       setSelectedStationId(station.id);
@@ -89,8 +115,19 @@ export const FastTicketModal: React.FC<FastTicketModalProps> = ({
     if (isOpen) {
       setValidationError('');
       setPromoFeedback(null);
+      setRegisterNewClient(false);
+      setRegFullName('');
+      setRegPhone('+243 ');
+      setRegEmail('');
+      setRegSponsorCode('');
     }
   }, [isOpen]);
+
+  useEffect(() => {
+    if (selectedDuration < MINIMUM_REGISTRATION_TICKET_MINUTES || !isAnonymous) {
+      setRegisterNewClient(false);
+    }
+  }, [selectedDuration, isAnonymous]);
 
   if (!isOpen) return null;
 
@@ -240,8 +277,58 @@ export const FastTicketModal: React.FC<FastTicketModalProps> = ({
       }
     }
 
-    const clientName = isAnonymous ? anonymousName || 'Client de passage' : selectedClient?.fullName || 'Joueur';
-    const clientPhone = isAnonymous ? (payerPhone.trim() !== '+243' ? payerPhone.trim() : undefined) : selectedClient?.phone;
+    let newClientRegistration: NewClientTicketRegistration | undefined;
+    if (isAnonymous && registerNewClient) {
+      if (selectedDuration < MINIMUM_REGISTRATION_TICKET_MINUTES) {
+        setValidationError(
+          "L'inscription d'un nouveau client requiert obligatoirement un ticket de 3H (180 min) minimum."
+        );
+        return;
+      }
+      if (regFullName.trim().length < 2) {
+        setValidationError('Veuillez saisir le nom complet du client à enregistrer.');
+        return;
+      }
+      if (normalizePhoneDigits(regPhone).length < 8) {
+        setValidationError('Veuillez saisir un numéro WhatsApp valide (minimum 8 chiffres) pour recevoir le message de bienvenue.');
+        return;
+      }
+      if (clients.some((c) => phonesMatch(c.phone, regPhone))) {
+        setValidationError('Ce numéro est déjà enregistré. Sélectionnez le client dans "Fidélisé".');
+        return;
+      }
+      const cleanSponsor = regSponsorCode.trim().toUpperCase();
+      if (cleanSponsor) {
+        if (!isValidReferralCodeFormat(cleanSponsor)) {
+          setValidationError('Le code parrain doit contenir maximum 5 caractères (lettres et chiffres uniquement).');
+          return;
+        }
+        const sponsorExists = clients.some((c) => c.referralCode.toUpperCase() === cleanSponsor);
+        if (!sponsorExists) {
+          setValidationError(`Code parrain "${cleanSponsor}" introuvable dans la base.`);
+          return;
+        }
+      }
+      newClientRegistration = {
+        fullName: regFullName.trim(),
+        phone: regPhone.trim(),
+        email: regEmail.trim() || undefined,
+        sponsorCode: cleanSponsor || undefined,
+      };
+    }
+
+    const clientName = newClientRegistration
+      ? newClientRegistration.fullName
+      : isAnonymous
+      ? anonymousName || 'Client de passage'
+      : selectedClient?.fullName || 'Joueur';
+    const clientPhone = newClientRegistration
+      ? newClientRegistration.phone
+      : isAnonymous
+      ? payerPhone.trim() !== '+243'
+        ? payerPhone.trim()
+        : undefined
+      : selectedClient?.phone;
 
     const randomHex = Array.from(crypto.getRandomValues(new Uint8Array(12)))
       .map((b) => b.toString(16).padStart(2, '0'))
@@ -272,7 +359,7 @@ export const FastTicketModal: React.FC<FastTicketModalProps> = ({
       appliedPromoDiscountCDF: pricing.promoDiscountCDF > 0 ? pricing.promoDiscountCDF : undefined,
       paymentMethod,
       paymentReference: paymentReference.trim() || undefined,
-      payerPhone: payerPhone.trim() && payerPhone.trim() !== '+243' ? payerPhone.trim() : undefined,
+      payerPhone: newClientRegistration?.phone || (payerPhone.trim() && payerPhone.trim() !== '+243' ? payerPhone.trim() : undefined),
       mixedBreakdown: mixedBreakdownPayload,
       cashReceivedCDF: paymentMethod === 'CASH_CDF' ? cashRcvdCDFNum || finalAmountCDF : undefined,
       cashReceivedUSD: paymentMethod === 'CASH_USD' ? cashRcvdUSDNum || finalAmountUSD : undefined,
@@ -291,7 +378,12 @@ export const FastTicketModal: React.FC<FastTicketModalProps> = ({
       },
     };
 
-    onConfirmTicket(newTicket, isAnonymous ? undefined : selectedClient, paymentMethod === 'LOYALTY_POINTS');
+    onConfirmTicket(
+      newTicket,
+      isAnonymous ? undefined : selectedClient,
+      paymentMethod === 'LOYALTY_POINTS',
+      newClientRegistration
+    );
   };
 
   return (
@@ -467,13 +559,88 @@ export const FastTicketModal: React.FC<FastTicketModalProps> = ({
             </div>
 
             {isAnonymous ? (
-              <input
-                type="text"
-                value={anonymousName}
-                onChange={(e) => setAnonymousName(e.target.value)}
-                placeholder="Nom du joueur ou surnom (optionnel)"
-                className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
-              />
+              <div className="space-y-2.5">
+                {!registerNewClient && (
+                  <input
+                    type="text"
+                    value={anonymousName}
+                    onChange={(e) => setAnonymousName(e.target.value)}
+                    placeholder="Nom du joueur ou surnom (optionnel)"
+                    className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                  />
+                )}
+
+                {selectedDuration >= MINIMUM_REGISTRATION_TICKET_MINUTES ? (
+                  <div className="bg-emerald-950/25 border border-emerald-500/40 rounded-xl p-3 space-y-2.5">
+                    <label className="flex items-center justify-between gap-2 cursor-pointer">
+                      <div>
+                        <span className="text-xs font-bold text-emerald-300 block">
+                          Inscrire ce nouveau client dans le système (Ticket 3H+ éligible)
+                        </span>
+                        <span className="text-[10px] text-slate-400">
+                          Génère un code parrain unique (5 car.) &amp; envoie ses coordonnées Espace Client sur WhatsApp
+                        </span>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={registerNewClient}
+                        onChange={(e) => setRegisterNewClient(e.target.checked)}
+                        className="w-4 h-4 accent-emerald-500 rounded cursor-pointer shrink-0"
+                      />
+                    </label>
+
+                    {registerNewClient && (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2 border-t border-emerald-500/20 text-xs">
+                        <div>
+                          <label className="text-[11px] text-slate-300 block mb-1">Nom complet *</label>
+                          <input
+                            type="text"
+                            value={regFullName}
+                            onChange={(e) => setRegFullName(e.target.value)}
+                            placeholder="Ex: Corneille Vumongo"
+                            className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white text-xs focus:outline-none focus:border-emerald-400"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[11px] text-slate-300 block mb-1">Téléphone WhatsApp * (RDC)</label>
+                          <input
+                            type="text"
+                            value={regPhone}
+                            onChange={(e) => setRegPhone(e.target.value)}
+                            placeholder="+243 89 000 0000"
+                            className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white font-mono text-xs focus:outline-none focus:border-emerald-400"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[11px] text-slate-300 block mb-1">Email (optionnel)</label>
+                          <input
+                            type="email"
+                            value={regEmail}
+                            onChange={(e) => setRegEmail(e.target.value)}
+                            placeholder="joueur@gmail.com"
+                            className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white text-xs focus:outline-none focus:border-emerald-400"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[11px] text-slate-300 block mb-1">Code Parrain (max 5 car.)</label>
+                          <input
+                            type="text"
+                            maxLength={5}
+                            value={regSponsorCode}
+                            onChange={(e) => setRegSponsorCode(normalizeReferralCodeInput(e.target.value))}
+                            placeholder="Ex: GL243"
+                            className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white font-mono uppercase text-xs focus:outline-none focus:border-emerald-400"
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="px-2.5 py-1.5 rounded-lg bg-slate-800/60 border border-slate-700/70 text-[11px] text-slate-400">
+                    Condition d&apos;inscription : un nouveau joueur ne peut être enregistré qu&apos;à l&apos;achat d&apos;un ticket de <strong className="text-slate-200">3H (180 min)</strong> minimum.
+                  </div>
+                )}
+              </div>
             ) : (
               <div className="space-y-2">
                 <select

@@ -103,7 +103,7 @@ export const PublicTicketVerificationView: React.FC<PublicTicketVerificationView
           <RefreshCw className="w-8 h-8 text-cyan-400 animate-spin mx-auto" />
           <h1 className="text-base font-bold text-white">Vérification du ticket en cours...</h1>
           <p className="text-xs text-slate-400">
-            Consultation du registre officiel Kin Gaming Hub pour le jeton scanné.
+            Consultation du registre officiel GOZA pour le jeton scanné.
           </p>
         </div>
       </div>
@@ -121,7 +121,7 @@ export const PublicTicketVerificationView: React.FC<PublicTicketVerificationView
           <div>
             <h1 className="text-lg font-bold text-white">Ticket Introuvable ou Invalide</h1>
             <p className="text-xs text-slate-400 mt-1">
-              Ce jeton de vérification ne correspond à aucune session enregistrée chez Kin Gaming Hub.
+              Ce jeton de vérification ne correspond à aucune session enregistrée chez GOZA.
             </p>
           </div>
           <div className="p-3 bg-slate-950 rounded-xl border border-slate-800 text-[11px] font-mono text-slate-400 break-all">
@@ -172,7 +172,9 @@ export const PublicTicketVerificationView: React.FC<PublicTicketVerificationView
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h1 className="text-base font-bold text-white tracking-tight">Kin Gaming Hub</h1>
+                <h1 className="text-lg font-gaming font-black uppercase tracking-[0.14em] bg-gradient-to-r from-white via-cyan-200 to-amber-300 bg-clip-text text-transparent">
+                  GOZA
+                </h1>
                 <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1">
                   <ShieldCheck className="w-3 h-3" />
                   Vérifié

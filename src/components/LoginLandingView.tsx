@@ -20,6 +20,9 @@ import {
   Hash
 } from 'lucide-react';
 import { StaffUser, Client, StaffRole } from '../types';
+import { GozaWordmark } from './GozaWordmark';
+import { GozaPs5HeroShowcase } from './GozaPs5HeaderBanner';
+import gozaLoginArenaImg from '../assets/images/goza_login_arena_1794933158260.jpg';
 
 interface LoginLandingViewProps {
   staffUsers: StaffUser[];
@@ -307,75 +310,97 @@ export const LoginLandingView: React.FC<LoginLandingViewProps> = ({
     setAuthenticatedClient(null);
   };
 
+  const legacyKinBg = '/assets/aistudio/Kin_Gaming_Hub___univers_ne_on_des_jeux_vide_o_220341d3.png';
+  const resolvedLoginBg =
+    backgroundImageUrl && backgroundImageUrl !== legacyKinBg
+      ? backgroundImageUrl
+      : gozaLoginArenaImg;
+
   return (
-    <div className="relative min-h-screen w-full bg-[#050811] text-slate-100 font-sans overflow-x-hidden flex flex-col justify-between selection:bg-amber-500 selection:text-slate-950">
-      {/* ================= 1. FOND DESKTOP (LOGO GÉANT PLEIN ÉCRAN ASSOMBRI À DROITE) ================= */}
-      <div className="hidden md:block fixed inset-0 pointer-events-none z-0 overflow-hidden">
-        {backgroundImageUrl &&
-        backgroundImageUrl !== '/assets/aistudio/Kin_Gaming_Hub___univers_ne_on_des_jeux_vide_o_220341d3.png' ? (
-          <img
-            src={backgroundImageUrl}
-            alt="Kin Gaming Hub Fond"
-            className="w-full h-full object-cover object-center select-none transition-transform duration-1000"
-          />
-        ) : (
-          <picture>
-            <source srcSet="/assets/aistudio/kin_gaming_hub_bg_opt.webp" type="image/webp" />
-            <img
-              src="/assets/aistudio/Kin_Gaming_Hub___univers_ne_on_des_jeux_vide_o_220341d3.png"
-              alt="Kin Gaming Hub Logo Fond"
-              className="w-full h-full object-cover object-left-top select-none transform scale-105 transition-transform duration-1000"
-            />
-          </picture>
-        )}
+    <div className="relative min-h-screen w-full bg-gradient-to-br from-[#050811] via-[#0b1326] to-[#050811] text-slate-100 font-sans overflow-x-hidden flex flex-col justify-between selection:bg-amber-500 selection:text-slate-950">
+      {/* ================= 1. FOND DESKTOP PLEIN ÉCRAN PHOTORÉALISTE GAMING ================= */}
+      <div className="hidden md:block fixed inset-0 pointer-events-none z-0 overflow-hidden bg-[#050811]">
+        <img
+          src={resolvedLoginBg}
+          alt="Intérieur réaliste de la salle de jeux GOZA équipée de consoles PS4 et PS5"
+          referrerPolicy="no-referrer"
+          className="w-full h-full object-cover object-center select-none scale-[1.01] transition-transform duration-1000"
+        />
 
-        {/* Dégradé latéral ultra-léger pour préserver la visibilité intégrale de l'image */}
-        <div className="absolute inset-0 bg-gradient-to-r from-transparent via-black/15 to-black/35" />
-
-        {/* Vignette périphérique pour estomper les bords flous blancs du logo */}
-        <div className="absolute inset-0 shadow-[inset_0_0_120px_60px_#050811] pointer-events-none" />
+        {/* Voile de contraste mesuré pour préserver la profondeur de la salle tout en garantissant la lisibilité */}
+        <div className="absolute inset-0 bg-gradient-to-r from-[#050811]/90 via-[#050811]/45 to-[#050811]/85" />
+        <div className="absolute inset-0 bg-gradient-to-t from-[#050811]/95 via-transparent to-[#050811]/65" />
       </div>
 
-      {/* ================= 2. EN-TÊTE ÉPURÉ (SANS TITRE TEXTUEL REDONDANT) ================= */}
-      <header className="relative z-10 w-full px-4 sm:px-6 py-3.5 flex items-center justify-between">
-        {/* Statut Salle de Jeux */}
-        <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-950/80 backdrop-blur-md border border-slate-800 text-[11px] font-mono text-slate-300 shadow-md">
-          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+      {/* ================= 2. EN-TÊTE PLEINE LARGEUR ================= */}
+      <header className="relative z-10 w-full px-4 sm:px-8 lg:px-14 py-4 flex items-center justify-between">
+        <div className="md:hidden">
+          <GozaWordmark name="GOZA" size="sm" />
+        </div>
+        <div className="hidden md:inline-flex items-center gap-2.5 px-3.5 py-1.5 rounded-lg bg-slate-950/75 backdrop-blur-md border border-white/10 text-[11px] font-mono text-slate-200 shadow-md">
+          <span className="w-2 h-2 rounded-full bg-emerald-400" />
           <span>Salle Ouverte · Kinshasa Gombe</span>
         </div>
       </header>
 
-      {/* ================= 3. SUR TÉLÉPHONE : LOGO EN ENTIER EN HAUT ================= */}
+      {/* ================= 3. SUR TÉLÉPHONE : ARÈNE GAMING RÉALISTE + TITRE GOZA ================= */}
       <div className="md:hidden relative w-full pt-1 px-4 z-10 flex flex-col items-center">
-        <div className="relative w-full max-w-sm rounded-3xl overflow-hidden border border-slate-800/80 shadow-2xl shadow-black/80 bg-slate-950/50">
-          {backgroundImageUrl &&
-          backgroundImageUrl !== '/assets/aistudio/Kin_Gaming_Hub___univers_ne_on_des_jeux_vide_o_220341d3.png' ? (
-            <img
-              src={backgroundImageUrl}
-              alt="Kin Gaming Hub Fond"
-              className="w-full h-auto object-contain block"
-            />
-          ) : (
-            <picture>
-              <source srcSet="/assets/aistudio/kin_gaming_hub_bg_opt.webp" type="image/webp" />
-              <img
-                src="/assets/aistudio/Kin_Gaming_Hub___univers_ne_on_des_jeux_vide_o_220341d3.png"
-                alt="Kin Gaming Hub Logo"
-                className="w-full h-auto object-contain block"
-              />
-            </picture>
-          )}
-          <div className="absolute inset-0 bg-gradient-to-t from-[#050811] via-transparent to-transparent pointer-events-none" />
-          <div className="absolute inset-0 shadow-[inset_0_0_40px_20px_#050811] pointer-events-none" />
+        <div className="relative w-full aspect-video rounded-2xl overflow-hidden border border-white/15 shadow-2xl shadow-black/80 bg-gradient-to-br from-slate-900 to-slate-950">
+          <img
+            src={resolvedLoginBg}
+            alt="Salle de jeux GOZA Kinshasa"
+            referrerPolicy="no-referrer"
+            className="w-full h-full object-cover object-center block"
+          />
+          <div className="absolute inset-0 bg-gradient-to-t from-[#050811] via-[#050811]/35 to-transparent pointer-events-none" />
+          <div className="absolute bottom-3 left-4 right-4 flex flex-col gap-1">
+            <GozaWordmark name="GOZA" size="lg" />
+            <p className="text-[11px] font-mono uppercase tracking-widest text-cyan-300/90">
+              Arène PS4 &amp; PS5 · Kinshasa
+            </p>
+          </div>
         </div>
       </div>
 
-      {/* ================= 4. ZONE PRINCIPALE : SPLIT DESKTOP & STACK MOBILE ================= */}
-      <main className="relative z-10 flex-1 flex flex-col md:flex-row items-center justify-end px-4 sm:px-6 lg:px-12 py-4 md:py-12">
-        <div className="hidden md:block flex-1" />
+      {/* ================= 4. ZONE PRINCIPALE PLEIN ÉCRAN : HERO GAMING À GAUCHE + CARTE CONNEXION À DROITE ================= */}
+      <main className="relative z-10 flex-1 w-full flex flex-col md:flex-row items-center justify-between gap-8 lg:gap-14 px-4 sm:px-8 lg:px-14 xl:px-20 py-4 md:py-10">
+        {/* Identité Gaming GOZA sur Desktop */}
+        <section className="hidden md:flex flex-1 flex-col justify-center max-w-2xl space-y-5">
+          <div className="inline-flex flex-col space-y-3 w-fit max-w-full">
+            <GozaPs5HeroShowcase venueName="GOZA" />
+            <div className="relative h-1.5 w-full rounded-full overflow-hidden bg-gradient-to-r from-cyan-400 via-blue-500 to-amber-400 animate-goza-shimmer shadow-[0_0_16px_rgba(34,211,238,0.45)]">
+              <div className="absolute inset-y-0 left-0 w-1/2 bg-gradient-to-r from-transparent via-white/90 to-transparent animate-ps5-lightbar" />
+            </div>
+          </div>
 
-        {/* ================= CARTE DE CONNEXION RÉELLE (TRANSPARENTE GLASSMORPHISME) ================= */}
-        <div className="w-full max-w-md bg-black/35 backdrop-blur-md border border-white/20 rounded-3xl p-6 sm:p-7 shadow-2xl shadow-black/80 space-y-5 mt-4 md:mt-0 ring-1 ring-white/10">
+          <h1 className="text-xl lg:text-2xl font-bold text-white tracking-tight leading-snug">
+            Arène PlayStation Next-Gen &amp; Espace Compétition
+          </h1>
+
+          <p className="text-sm lg:text-base text-slate-300 leading-relaxed max-w-xl">
+            Gestion temps réel des postes PS4 et PS5, billetterie express, caisse bidevise CDF / USD, programme fidélité joueurs et contrôle électrique automatisé par relais Shelly.
+          </p>
+
+          <div className="flex flex-wrap items-center gap-6 pt-2 text-xs font-mono text-slate-300">
+            <div>
+              <span className="text-cyan-400 font-bold text-sm">10 POSTES</span>
+              <span className="block text-[11px] text-slate-400">PS4 Pro &amp; PS5 4K</span>
+            </div>
+            <div className="h-7 w-px bg-white/15" />
+            <div>
+              <span className="text-amber-400 font-bold text-sm">CDF / USD</span>
+              <span className="block text-[11px] text-slate-400">Encaissement bidevise</span>
+            </div>
+            <div className="h-7 w-px bg-white/15" />
+            <div>
+              <span className="text-emerald-400 font-bold text-sm">IOT SHELLY</span>
+              <span className="block text-[11px] text-slate-400">Allumage sur ticket</span>
+            </div>
+          </div>
+        </section>
+
+        {/* ================= CARTE DE CONNEXION RÉELLE (GLASSMORPHISME LISIBLE) ================= */}
+        <div className="w-full max-w-md bg-[#090f1d]/75 backdrop-blur-xl border border-white/20 rounded-3xl p-6 sm:p-7 shadow-2xl shadow-black/80 space-y-5 mt-4 md:mt-0 ring-1 ring-white/10">
           
           {/* ================= SÉLECTEUR D'ESPACE (DORÉ / BLEU) ================= */}
           <div className="grid grid-cols-2 gap-1.5 p-1.5 bg-black/40 backdrop-blur-sm rounded-2xl border border-white/15 text-xs font-bold">
@@ -846,7 +871,7 @@ export const LoginLandingView: React.FC<LoginLandingViewProps> = ({
 
       {/* ================= 5. PIED DE PAGE DISCRET ================= */}
       <footer className="relative z-10 w-full px-6 py-3 text-center text-[10px] text-slate-500 font-mono">
-        Kin Gaming Hub · Système de Gestion & Domotique IoT · Kinshasa, RDC
+        GOZA · Système de Gestion & Domotique IoT · Kinshasa, RDC
       </footer>
     </div>
   );

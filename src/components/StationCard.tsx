@@ -16,6 +16,7 @@ import { getConsoleLabel, isHighTierConsole } from '../services/consoleCatalog';
 
 interface StationCardProps {
   station: Station;
+  isShellyExempt?: boolean;
   onOpenTicket: (station: Station) => void;
   onExtend: (station: Station, minutes: number) => void;
   onTransfer: (station: Station) => void;
@@ -26,6 +27,7 @@ interface StationCardProps {
 
 export const StationCard: React.FC<StationCardProps> = ({
   station,
+  isShellyExempt = false,
   onOpenTicket,
   onExtend,
   onTransfer,
@@ -225,7 +227,11 @@ export const StationCard: React.FC<StationCardProps> = ({
             </div>
             <div>
               <p className="text-xs font-medium text-slate-300">Écran & Console prêts</p>
-              <p className="text-[11px] text-slate-400">Prise connectée en veille</p>
+              <p className="text-[11px] text-slate-400">
+                {isShellyExempt
+                  ? 'Relais Shelly exempté (contrôle manuel)'
+                  : 'Shelly OFF — S’allume au ticket généré'}
+              </p>
             </div>
             <button
               onClick={() => onOpenTicket(station)}
@@ -244,18 +250,34 @@ export const StationCard: React.FC<StationCardProps> = ({
         {/* Pied de carte : Télémétrie Domotique & Contrôles Relais */}
         <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between text-xs">
           {/* Relais & Puissance */}
-          <button
-            onClick={() => onTogglePower(station)}
-            title={`Prise ${station.relayState ? 'ALLUMÉE' : 'ÉTEINTE'} — Cliquer pour commuter`}
-            className={`flex items-center gap-1 px-2 py-1 rounded font-mono text-[11px] font-semibold transition ${
-              station.relayState
-                ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/20'
-                : 'bg-slate-800 text-slate-400 border border-slate-700 hover:bg-slate-700'
-            }`}
-          >
-            <Zap className={`w-3 h-3 ${station.relayState ? 'text-emerald-400 fill-emerald-400' : 'text-slate-500'}`} />
-            <span>{station.relayState ? `${station.currentWatts.toFixed(0)}W` : 'OFF'}</span>
-          </button>
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => onTogglePower(station)}
+              title={`Prise ${station.relayState ? 'ALLUMÉE' : 'ÉTEINTE'} — Cliquer pour commuter`}
+              className={`flex items-center gap-1 px-2 py-1 rounded font-mono text-[11px] font-semibold transition ${
+                station.relayState
+                  ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/20'
+                  : 'bg-slate-800 text-slate-400 border border-slate-700 hover:bg-slate-700'
+              }`}
+            >
+              <Zap className={`w-3 h-3 ${station.relayState ? 'text-emerald-400 fill-emerald-400' : 'text-slate-500'}`} />
+              <span>{station.relayState ? `${station.currentWatts.toFixed(0)}W` : 'OFF'}</span>
+            </button>
+            <span
+              title={
+                isShellyExempt
+                  ? 'Poste exempté : aucun déclenchement automatique lors de la génération du ticket'
+                  : 'Relais Shelly activé automatiquement uniquement lorsqu’un ticket est généré sur ce poste'
+              }
+              className={`text-[9px] font-mono px-1.5 py-0.5 rounded border ${
+                isShellyExempt
+                  ? 'bg-amber-500/10 text-amber-300 border-amber-500/30'
+                  : 'bg-cyan-500/10 text-cyan-300 border-cyan-500/30'
+              }`}
+            >
+              {isShellyExempt ? 'Manuel' : 'Auto Ticket'}
+            </span>
+          </div>
 
           {/* Actions secondaires */}
           <div className="flex items-center gap-1">

@@ -205,7 +205,7 @@ export const StaffLoginModal: React.FC<StaffLoginModalProps> = ({
           <div className="w-12 h-12 rounded-2xl bg-blue-600/20 border border-blue-500/30 text-blue-400 flex items-center justify-center mx-auto shadow-inner">
             <Lock className="w-6 h-6" />
           </div>
-          <h2 className="text-lg font-bold text-white tracking-tight">Kin Gaming Hub — Accès Personnel</h2>
+          <h2 className="text-lg font-bold text-white tracking-tight">GOZA — Accès Personnel</h2>
           <p className="text-xs text-slate-400">Authentification sécurisée du personnel d'accueil</p>
         </div>
 

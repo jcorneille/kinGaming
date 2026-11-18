@@ -236,10 +236,10 @@ export const StaffManagementModal: React.FC<StaffManagementModalProps> = ({
                           <img
                             src={user.avatarUrl}
                             alt={user.fullName}
-                            className="w-9 h-9 rounded-xl object-cover border border-slate-600 shrink-0 mt-0.5"
+                            className="w-9 h-9 rounded-full object-cover border border-slate-600 shrink-0 mt-0.5"
                           />
                         ) : (
-                          <div className="w-9 h-9 rounded-xl bg-slate-700/80 border border-slate-600 flex items-center justify-center text-xs font-black text-cyan-300 shrink-0 mt-0.5">
+                          <div className="w-9 h-9 rounded-full bg-slate-700/80 border border-slate-600 flex items-center justify-center text-xs font-black text-cyan-300 shrink-0 mt-0.5">
                             {user.fullName.charAt(0).toUpperCase()}
                           </div>
                         )}

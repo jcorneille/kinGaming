@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 import { Client, QueueEntry, TierRulesConfig } from '../types';
 import { evaluateClientTier, DEFAULT_TIER_RULES } from '../services/tierEngine';
-import { compressProfileImage } from '../utils/imageResize';
+import { compressProfileImage, PROFILE_IMAGE_ACCEPT } from '../utils/imageResize';
 import { Pagination } from './Pagination';
 
 interface CustomerPortalViewProps {
@@ -134,7 +134,7 @@ export const CustomerPortalView: React.FC<CustomerPortalViewProps> = ({
   };
 
   return (
-    <div className="max-w-4xl mx-auto space-y-5 animate-fade-in">
+    <div className="w-full space-y-5 animate-fade-in">
       {!liveClient ? (
         /* Écran de connexion client strict (aucun compte démo d'autres clients exposé) */
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 sm:p-8 max-w-md mx-auto space-y-6 shadow-2xl">
@@ -142,7 +142,9 @@ export const CustomerPortalView: React.FC<CustomerPortalViewProps> = ({
             <div className="w-12 h-12 rounded-2xl bg-amber-500/20 border border-amber-500/30 text-amber-400 flex items-center justify-center mx-auto">
               <User className="w-6 h-6" />
             </div>
-            <h2 className="text-lg font-bold text-white tracking-tight">Espace Joueur Kin Gaming Hub</h2>
+            <h2 className="text-lg font-gaming font-black uppercase tracking-[0.1em] text-white">
+              Espace Joueur GOZA
+            </h2>
             <p className="text-xs text-slate-400">
               Consultez uniquement vos points, votre rang et votre position personnelle en file d&apos;attente.
             </p>
@@ -343,10 +345,10 @@ export const CustomerPortalView: React.FC<CustomerPortalViewProps> = ({
                   <img
                     src={liveClient.avatarUrl}
                     alt={liveClient.fullName}
-                    className="w-16 h-16 rounded-2xl object-cover border-2 border-amber-400/70 shadow-lg"
+                    className="w-16 h-16 rounded-full object-cover border-2 border-amber-400/70 shadow-lg"
                   />
                 ) : (
-                  <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-amber-500 to-yellow-600 flex items-center justify-center text-slate-950 font-black text-2xl shadow-lg shadow-amber-500/20">
+                  <div className="w-16 h-16 rounded-full bg-gradient-to-br from-amber-500 to-yellow-600 flex items-center justify-center text-slate-950 font-black text-2xl shadow-lg shadow-amber-500/20">
                     {liveClient.fullName.charAt(0).toUpperCase()}
                   </div>
                 )}
@@ -368,11 +370,11 @@ export const CustomerPortalView: React.FC<CustomerPortalViewProps> = ({
                   <span>{liveClient.phone}</span>
                 </div>
                 {onClientUpdateAvatar && (
-                  <div className="mt-2 flex items-center justify-center sm:justify-start gap-2">
+                  <div className="mt-2 flex flex-wrap items-center justify-center sm:justify-start gap-2">
                     <input
                       ref={fileInputRef}
                       type="file"
-                      accept="image/*"
+                      accept={PROFILE_IMAGE_ACCEPT}
                       onChange={handleAvatarUpload}
                       className="hidden"
                     />
@@ -393,6 +395,7 @@ export const CustomerPortalView: React.FC<CustomerPortalViewProps> = ({
                         <Trash2 className="w-3 h-3" />
                       </button>
                     )}
+                    <span className="text-[10px] text-slate-500">JPG, PNG, WebP, GIF, AVIF, BMP, SVG…</span>
                   </div>
                 )}
                 {avatarError && <div className="text-[11px] text-rose-400 mt-1">{avatarError}</div>}
@@ -524,7 +527,7 @@ export const CustomerPortalView: React.FC<CustomerPortalViewProps> = ({
               </div>
               <a
                 href={`https://wa.me/?text=${encodeURIComponent(
-                  `Rejoins-moi à Kin Gaming Hub avec mon code parrain ${liveClient.referralCode} pour recevoir des points de fidélité !`
+                  `Rejoins-moi chez GOZA avec mon code parrain ${liveClient.referralCode} pour recevoir des points de fidélité !`
                 )}`}
                 target="_blank"
                 rel="noopener noreferrer"

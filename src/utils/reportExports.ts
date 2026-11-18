@@ -79,7 +79,7 @@ export function exportReportToExcel(data: ReportExportPayload): void {
 
   // Feuille 1 : Synthèse KPIs
   const summaryRows = [
-    ['Rapport Analytique Kin Gaming Hub', data.settings.venueName || 'Kin Gaming Hub'],
+    ['Rapport Analytique GOZA', data.settings.venueName || 'GOZA'],
     ['Période analysée', data.periodLabel],
     ['Date de génération', new Date().toLocaleString('fr-FR')],
     ['Taux appliqué', `1 USD = ${settings.exchangeRate.toLocaleString()} CDF`],
@@ -217,13 +217,13 @@ export function exportReportToExcel(data: ReportExportPayload): void {
   );
   XLSX.utils.book_append_sheet(wb, wsAudit, 'Audit Sécurité');
 
-  XLSX.writeFile(wb, `kin_gaming_hub_rapport_${getDateStamp()}.xlsx`);
+  XLSX.writeFile(wb, `goza_rapport_${getDateStamp()}.xlsx`);
 }
 
 export function exportReportToPDF(data: ReportExportPayload): void {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   const { kpis, settings } = data;
-  const venueName = settings.venueName || 'KIN GAMING HUB';
+  const venueName = settings.venueName || 'GOZA';
 
   // En-tête stylisé
   doc.setFillColor(15, 23, 42);
@@ -327,5 +327,5 @@ export function exportReportToPDF(data: ReportExportPayload): void {
     });
   }
 
-  doc.save(`kin_gaming_hub_rapport_${getDateStamp()}.pdf`);
+  doc.save(`goza_rapport_${getDateStamp()}.pdf`);
 }

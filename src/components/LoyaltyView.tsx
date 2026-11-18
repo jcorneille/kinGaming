@@ -24,13 +24,21 @@ import {
   TierRulesConfig,
   TierHistoryEntry,
   StaffRole,
+  Ticket,
 } from '../types';
 import { evaluateClientTier, DEFAULT_TIER_RULES } from '../services/tierEngine';
+import {
+  MINIMUM_REGISTRATION_TICKET_MINUTES,
+  normalizeReferralCodeInput,
+  isValidReferralCodeFormat,
+  findQualifying3HTicket,
+} from '../services/referralCode';
 import { QRCodeSVG } from './QRCodeSVG';
 import { Pagination } from './Pagination';
 
 interface LoyaltyViewProps {
   clients: Client[];
+  tickets?: Ticket[];
   transactions: LoyaltyTransaction[];
   tierHistory: TierHistoryEntry[];
   settings: SystemSettings;
@@ -57,7 +65,8 @@ interface LoyaltyViewProps {
       | 'failedLoginAttempts'
       | 'pin'
     >,
-    sponsorCode?: string
+    sponsorCode?: string,
+    qualifyingTicketNumber?: string
   ) => { success: boolean; message: string };
   onConvertPoints: (clientId: string, pointsSpent: number, freeMinutes: number, stationType: 'PS4' | 'PS5') => void;
   onToggleClientPortal?: (clientId: string, disabled: boolean, reason?: string) => void;
@@ -67,6 +76,7 @@ const PAGE_SIZE = 10;
 
 export const LoyaltyView: React.FC<LoyaltyViewProps> = ({
   clients,
+  tickets = [],
   transactions,
   tierHistory,
   settings,
@@ -98,6 +108,7 @@ export const LoyaltyView: React.FC<LoyaltyViewProps> = ({
   const [phone, setPhone] = useState('+243 ');
   const [email, setEmail] = useState('');
   const [sponsorCode, setSponsorCode] = useState('');
+  const [qualifyingTicketNumber, setQualifyingTicketNumber] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
 
   // Formulaire de conversion rapide
@@ -152,12 +163,34 @@ export const LoyaltyView: React.FC<LoyaltyViewProps> = ({
     }
   };
 
+  const eligible3HTickets = tickets.filter(
+    (t) =>
+      t.durationMinutes >= MINIMUM_REGISTRATION_TICKET_MINUTES &&
+      t.status !== 'refunded' &&
+      t.status !== 'cancelled' &&
+      !t.clientId
+  );
+
   const handleRegisterClient = (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
 
     if (!fullName.trim() || phone.trim().length < 8) {
       setErrorMessage('Veuillez renseigner un nom et un numéro de téléphone valide.');
+      return;
+    }
+
+    const cleanSponsor = sponsorCode.trim().toUpperCase();
+    if (cleanSponsor && !isValidReferralCodeFormat(cleanSponsor)) {
+      setErrorMessage('Le code parrain doit comporter maximum 5 caractères (lettres et chiffres uniquement).');
+      return;
+    }
+
+    const qualifying = findQualifying3HTicket(tickets, phone.trim(), qualifyingTicketNumber);
+    if (!qualifying) {
+      setErrorMessage(
+        "Condition requise : un client ne peut être enregistré dans le système que s'il achète un ticket de 3H (180 min) minimum."
+      );
       return;
     }
 
@@ -169,7 +202,8 @@ export const LoyaltyView: React.FC<LoyaltyViewProps> = ({
         whatsappConsent: true,
         whatsappConsentDate: Date.now(),
       },
-      sponsorCode.trim() ? sponsorCode.trim() : undefined
+      cleanSponsor || undefined,
+      qualifying.ticketNumber
     );
 
     if (res.success) {
@@ -178,6 +212,7 @@ export const LoyaltyView: React.FC<LoyaltyViewProps> = ({
       setPhone('+243 ');
       setEmail('');
       setSponsorCode('');
+      setQualifyingTicketNumber('');
       setFeedbackBanner({ type: 'success', text: res.message });
     } else {
       setErrorMessage(res.message);
@@ -377,10 +412,10 @@ export const LoyaltyView: React.FC<LoyaltyViewProps> = ({
                         <img
                           src={client.avatarUrl}
                           alt={client.fullName}
-                          className="w-10 h-10 rounded-xl object-cover border border-slate-700 shrink-0"
+                          className="w-10 h-10 rounded-full object-cover border border-slate-700 shrink-0"
                         />
                       ) : (
-                        <div className="w-10 h-10 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center text-sm font-black text-cyan-400 shrink-0">
+                        <div className="w-10 h-10 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-sm font-black text-cyan-400 shrink-0">
                           {client.fullName.charAt(0).toUpperCase()}
                         </div>
                       )}
@@ -899,15 +934,27 @@ export const LoyaltyView: React.FC<LoyaltyViewProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  setFullName('Corneille Vumongo');
-                  setPhone('+243 89 545 7097');
+                  const firstTicket = eligible3HTickets[0];
+                  setFullName(
+                    firstTicket && firstTicket.clientName && firstTicket.clientName !== 'Client de passage'
+                      ? firstTicket.clientName
+                      : 'Corneille Vumongo'
+                  );
+                  setPhone(firstTicket?.clientPhone || firstTicket?.payerPhone || '+243 89 545 7097');
                   setEmail('corneillevumongo@gmail.com');
-                  setSponsorCode('GLODY243');
+                  setSponsorCode('GL243');
+                  if (firstTicket) {
+                    setQualifyingTicketNumber(firstTicket.ticketNumber);
+                  }
                 }}
                 className="text-[10px] px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/40 hover:bg-blue-500/30 font-semibold transition"
               >
                 Remplir à ma place
               </button>
+            </div>
+
+            <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-[11px] leading-relaxed">
+              <strong>Condition obligatoire :</strong> un client ne peut être enregistré dans la base que s&apos;il a acheté un ticket d&apos;au moins <strong>3H (180 min)</strong>. Un message WhatsApp de bienvenue avec ses avantages et accès Espace Client sera envoyé dès validation.
             </div>
 
             {errorMessage && (
@@ -917,6 +964,35 @@ export const LoyaltyView: React.FC<LoyaltyViewProps> = ({
             )}
 
             <form onSubmit={handleRegisterClient} className="space-y-3 text-xs">
+              <div>
+                <label className="text-slate-400 block mb-1">Ticket 3H justificatif *</label>
+                <select
+                  value={qualifyingTicketNumber}
+                  onChange={(e) => {
+                    const num = e.target.value;
+                    setQualifyingTicketNumber(num);
+                    const picked = eligible3HTickets.find((t) => t.ticketNumber === num);
+                    if (picked) {
+                      if (picked.clientName && picked.clientName !== 'Client de passage' && !fullName.trim()) {
+                        setFullName(picked.clientName);
+                      }
+                      const ticketPhone = picked.clientPhone || picked.payerPhone;
+                      if (ticketPhone && phone.trim() === '+243') {
+                        setPhone(ticketPhone);
+                      }
+                    }
+                  }}
+                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-white font-mono text-xs focus:outline-none focus:border-blue-500"
+                >
+                  <option value="">-- Correspondance automatique par téléphone ({eligible3HTickets.length} ticket(s) 3H disponibles) --</option>
+                  {eligible3HTickets.map((t) => (
+                    <option key={t.id} value={t.ticketNumber}>
+                      {t.ticketNumber} · {(t.durationMinutes / 60).toFixed(1).replace('.0', '')}h ({t.stationType}) — {t.clientName} {t.clientPhone ? `(${t.clientPhone})` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
               <div>
                 <label className="text-slate-400 block mb-1">Nom Complet *</label>
                 <input
@@ -930,7 +1006,7 @@ export const LoyaltyView: React.FC<LoyaltyViewProps> = ({
               </div>
 
               <div>
-                <label className="text-slate-400 block mb-1">Numéro de Téléphone * (RDC)</label>
+                <label className="text-slate-400 block mb-1">Numéro de Téléphone WhatsApp * (RDC)</label>
                 <input
                   type="text"
                   value={phone}
@@ -953,12 +1029,13 @@ export const LoyaltyView: React.FC<LoyaltyViewProps> = ({
               </div>
 
               <div>
-                <label className="text-slate-400 block mb-1">Code Parrain (optionnel)</label>
+                <label className="text-slate-400 block mb-1">Code Parrain (optionnel · max 5 car.)</label>
                 <input
                   type="text"
+                  maxLength={5}
                   value={sponsorCode}
-                  onChange={(e) => setSponsorCode(e.target.value)}
-                  placeholder="Ex: FALLY243 ou GLODY243"
+                  onChange={(e) => setSponsorCode(normalizeReferralCodeInput(e.target.value))}
+                  placeholder="Ex: GL243 ou FA243"
                   className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-white font-mono uppercase focus:outline-none focus:border-blue-500"
                 />
               </div>
@@ -966,7 +1043,10 @@ export const LoyaltyView: React.FC<LoyaltyViewProps> = ({
               <div className="flex justify-end gap-2 pt-2">
                 <button
                   type="button"
-                  onClick={() => setShowAddModal(false)}
+                  onClick={() => {
+                    setShowAddModal(false);
+                    setErrorMessage('');
+                  }}
                   className="px-3 py-1.5 text-slate-400 hover:text-white"
                 >
                   Annuler
