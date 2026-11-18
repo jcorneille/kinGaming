@@ -16,7 +16,7 @@ import { CashShiftView } from './components/CashShiftView';
 import { ReportsView } from './components/ReportsView';
 import { HardwareGuideModal } from './components/HardwareGuideModal';
 import { StaffLoginModal } from './components/StaffLoginModal';
-import { CustomerPortalView } from './components/CustomerPortalView';
+import { CustomerPortalView, CreateReservationPayload } from './components/CustomerPortalView';
 import { TierSettingsModal } from './components/TierSettingsModal';
 import { StaffManagementModal } from './components/StaffManagementModal';
 import { WhatsAppConfigModal } from './components/WhatsAppConfigModal';
@@ -57,6 +57,8 @@ import {
   SettingsHistoryEntry,
   ScheduledSettingChange,
   SystemSettings,
+  Reservation,
+  WifiVoucher,
 } from './types';
 import {
   loadAppState,
@@ -87,6 +89,20 @@ import {
   phonesMatch,
 } from './services/referralCode';
 import {
+  RESERVATION_MIN_MINUTES,
+  WIFI_MIN_TICKET_MINUTES,
+  canCancelReservationClient,
+  checkReservationAvailability,
+  computeLateDeduction,
+  computeReservationQuote,
+  createWifiVoucherForTicket,
+  evaluateReservationTimeWindow,
+  generateReservationCode,
+  getWifiMaxDevicesForDuration,
+  syncReservationToServer,
+  syncWifiVoucherToMikrotik,
+} from './services/wifiHotspotService';
+import {
   Users,
   Tv,
   CheckCircle2,
@@ -100,7 +116,6 @@ import {
   Lock,
   Smartphone,
   LogIn,
-  LogOut,
   Gamepad2,
   Sliders,
   MessageSquare,
@@ -849,11 +864,26 @@ export default function App() {
               // Chercher le ticket associé
               const associatedTicket = prev.tickets.find((t) => t.ticketNumber === st.currentTicketId);
               if (associatedTicket) {
+                const nowEnd = Date.now();
+                const expiredVoucher: WifiVoucher | undefined = associatedTicket.wifiVoucher
+                  ? {
+                      ...associatedTicket.wifiVoucher,
+                      status: 'EXPIRED',
+                      expiresAt: nowEnd,
+                      inQueueWaiting: false,
+                    }
+                  : undefined;
+                if (expiredVoucher) {
+                  setTimeout(() => {
+                    void syncWifiVoucherToMikrotik(expiredVoucher, 'REVOKE', prev.settings);
+                  }, 0);
+                }
                 autoReleasedTickets.push({
                   ...associatedTicket,
                   status: 'completed',
-                  actualEndTime: Date.now(),
+                  actualEndTime: nowEnd,
                   autoReleased: true,
+                  wifiVoucher: expiredVoucher,
                 });
               }
 
@@ -1191,6 +1221,20 @@ export default function App() {
       }
     }
 
+    // Générer un code Wi-Fi unique multi-appareils (1h=1, 3h=2, 4h=3, 5h+=4 app.) si ticket >= 1h (60 min)
+    const wifiMinMins = appState.settings.wifiMinTicketMinutes ?? WIFI_MIN_TICKET_MINUTES;
+    if (!ticket.wifiVoucher && ticket.durationMinutes >= wifiMinMins) {
+      const voucher = createWifiVoucherForTicket({
+        ticketNumber: ticket.ticketNumber,
+        durationMinutes: ticket.durationMinutes,
+        validFrom: ticket.startTime || Date.now(),
+        expiresAt: ticket.endTime || (Date.now() + ticket.durationMinutes * 60000),
+        settings: appState.settings,
+        inQueueWaiting: false,
+      });
+      ticket = { ...ticket, wifiVoucher: voucher };
+    }
+
     const isExemptStation = isStationShellyExempt(ticket.stationId, appState.settings);
     const shouldAutoPowerOn = appState.settings.autoPowerOnWithTicket !== false && !isExemptStation;
     const targetDevice = appState.domotiqueDevices.find((d) => d.stationId === ticket.stationId);
@@ -1476,6 +1520,10 @@ export default function App() {
       sendClientWelcomeWhatsApp(newlyRegisteredClient, appState.whatsappConfig, appState.settings);
     }
 
+    if (ticket.wifiVoucher) {
+      void syncWifiVoucherToMikrotik(ticket.wifiVoucher, 'CREATE', appState.settings);
+    }
+
     void syncTicketToServer(ticket);
     setIsTicketModalOpen(false);
     setCurrentPrintingTicket(ticket);
@@ -1505,13 +1553,46 @@ export default function App() {
 
       const updatedTickets = prev.tickets.map((tk) => {
         if (tk.ticketNumber === station.currentTicketId) {
+          const nextEndTime = (tk.endTime || Date.now()) + minutes * 60000;
+          const nextDuration = tk.durationMinutes + minutes;
+          const nextMaxDevices = Math.max(
+            tk.wifiVoucher?.maxDevices || 1,
+            getWifiMaxDevicesForDuration(nextDuration)
+          );
+          let updatedVoucher: WifiVoucher | undefined = tk.wifiVoucher
+            ? {
+                ...tk.wifiVoucher,
+                expiresAt: nextEndTime,
+                maxDevices: nextMaxDevices,
+                singleUseDeviceBound: nextMaxDevices === 1,
+                status: 'ACTIVE',
+              }
+            : undefined;
+          const wifiMinMins = prev.settings.wifiMinTicketMinutes ?? WIFI_MIN_TICKET_MINUTES;
+          if (!updatedVoucher && nextDuration >= wifiMinMins) {
+            updatedVoucher = createWifiVoucherForTicket({
+              ticketNumber: tk.ticketNumber,
+              durationMinutes: nextDuration,
+              validFrom: tk.startTime || Date.now(),
+              expiresAt: nextEndTime,
+              settings: prev.settings,
+              inQueueWaiting: false,
+            });
+          }
+          if (updatedVoucher) {
+            setTimeout(() => {
+              void syncWifiVoucherToMikrotik(updatedVoucher!, 'UPDATE', prev.settings);
+            }, 0);
+          }
           const nextTicket: Ticket = {
             ...tk,
-            durationMinutes: tk.durationMinutes + minutes,
+            durationMinutes: nextDuration,
+            endTime: nextEndTime,
             amountCDF: tk.amountCDF + extraCDF,
             amountUSD: tk.amountUSD + extraUSD,
             status: 'extended' as const,
             extendedCount: (tk.extendedCount || 0) + 1,
+            wifiVoucher: updatedVoucher,
           };
           setTimeout(() => {
             void syncTicketToServer(nextTicket);
@@ -1726,7 +1807,21 @@ export default function App() {
 
       const updatedTickets = prev.tickets.map((t) => {
         if (t.ticketNumber === station.currentTicketId) {
-          const completed: Ticket = { ...t, status: 'completed' as const, actualEndTime: Date.now() };
+          const nowEnd = Date.now();
+          const expiredVoucher: WifiVoucher | undefined = t.wifiVoucher
+            ? { ...t.wifiVoucher, status: 'EXPIRED', expiresAt: nowEnd, inQueueWaiting: false }
+            : undefined;
+          if (expiredVoucher) {
+            setTimeout(() => {
+              void syncWifiVoucherToMikrotik(expiredVoucher, 'REVOKE', prev.settings);
+            }, 0);
+          }
+          const completed: Ticket = {
+            ...t,
+            status: 'completed' as const,
+            actualEndTime: nowEnd,
+            wifiVoucher: expiredVoucher,
+          };
           setTimeout(() => {
             void syncTicketToServer(completed);
           }, 0);
@@ -1923,7 +2018,15 @@ export default function App() {
       const closedTickets: Ticket[] = [];
       const nextTickets = prev.tickets.map((t) => {
         if (t.status === 'active' || t.status === 'extended') {
-          const done: Ticket = { ...t, status: 'completed' as const, actualEndTime: now };
+          const expiredVoucher: WifiVoucher | undefined = t.wifiVoucher
+            ? { ...t.wifiVoucher, status: 'EXPIRED', expiresAt: now, inQueueWaiting: false }
+            : undefined;
+          if (expiredVoucher) {
+            setTimeout(() => {
+              void syncWifiVoucherToMikrotik(expiredVoucher, 'REVOKE', prev.settings);
+            }, 0);
+          }
+          const done: Ticket = { ...t, status: 'completed' as const, actualEndTime: now, wifiVoucher: expiredVoucher };
           closedTickets.push(done);
           return done;
         }
@@ -2195,12 +2298,122 @@ export default function App() {
   };
 
   const handleAssignToStation = (entry: QueueEntry, stationId: number) => {
-    const targetStation = appState.stations.find(s => s.id === stationId);
-    if (!targetStation) return;
+    const targetStation = appState.stations.find((s) => s.id === stationId);
+    if (!targetStation || targetStation.status !== 'available') return;
+
+    // Si le joueur vient d'une réservation / ticket déjà payé en file d'attente, on l'installe directement SANS double facturation
+    if (entry.prepaidTicketId || entry.prepaidTicketNumber) {
+      const linkedTicket = appState.tickets.find(
+        (t) => t.id === entry.prepaidTicketId || t.ticketNumber === entry.prepaidTicketNumber
+      );
+      if (linkedTicket) {
+        const now = Date.now();
+        const endTime = now + entry.desiredDurationMinutes * 60000;
+        const isExempt = isStationShellyExempt(targetStation.id, appState.settings);
+        const shouldAutoPowerOn = appState.settings.autoPowerOnWithTicket !== false && !isExempt;
+        const targetDevice = appState.domotiqueDevices.find((d) => d.stationId === targetStation.id);
+
+        if (shouldAutoPowerOn) {
+          dispatchStationShellyCommand({
+            stationId: targetStation.id,
+            state: 'ON',
+            target: 'BOTH',
+            device: targetDevice,
+            topicPrefix: appState.settings.mqttTopicPrefix,
+            reason: `QUEUE_PREPAID_${linkedTicket.ticketNumber}`,
+          });
+        }
+
+        const updatedVoucher: WifiVoucher | undefined = linkedTicket.wifiVoucher
+          ? {
+              ...linkedTicket.wifiVoucher,
+              status: 'ACTIVE',
+              expiresAt: endTime,
+              inQueueWaiting: false,
+            }
+          : undefined;
+
+        const updatedTicket: Ticket = {
+          ...linkedTicket,
+          stationId: targetStation.id,
+          stationName: targetStation.name,
+          stationType: targetStation.type,
+          startTime: now,
+          endTime,
+          status: 'active',
+          isQueuedPrepaid: false,
+          wifiVoucher: updatedVoucher,
+        };
+
+        setAppState((prev) => ({
+          ...prev,
+          queue: prev.queue.filter((q) => q.id !== entry.id),
+          stations: prev.stations.map((st) =>
+            st.id === targetStation.id
+              ? {
+                  ...st,
+                  status: 'occupied' as const,
+                  currentTicketId: updatedTicket.ticketNumber,
+                  clientName: updatedTicket.clientName,
+                  clientPhone: updatedTicket.clientPhone,
+                  clientId: updatedTicket.clientId,
+                  startTime: now,
+                  endTime,
+                  remainingSeconds: entry.desiredDurationMinutes * 60,
+                  totalDurationMinutes: entry.desiredDurationMinutes,
+                  relayState: shouldAutoPowerOn ? true : st.relayState,
+                  screenRelayState: shouldAutoPowerOn ? true : st.screenRelayState,
+                  currentWatts: shouldAutoPowerOn ? getConsoleWatts(st.type) : st.relayState ? getConsoleWatts(st.type) : 0,
+                  lastUpdated: now,
+                }
+              : st
+          ),
+          domotiqueDevices: prev.domotiqueDevices.map((d) =>
+            d.stationId === targetStation.id && shouldAutoPowerOn
+              ? { ...d, state: 'ON' as const, watts: getConsoleWatts(targetStation.type) }
+              : d
+          ),
+          tickets: prev.tickets.map((t) => (t.id === updatedTicket.id ? updatedTicket : t)),
+          reservations: (prev.reservations || []).map((r) =>
+            r.id === entry.reservationId || r.reservationCode === entry.reservationCode
+              ? {
+                  ...r,
+                  status: 'VALIDATED_ON_STATION' as const,
+                  stationId: targetStation.id,
+                  wifiVoucher: updatedVoucher,
+                }
+              : r
+          ),
+          auditLogs: [
+            {
+              id: 'aud-qseat-' + now,
+              timestamp: now,
+              userRole: prev.currentRole,
+              cashierName: prev.currentUser,
+              action: 'INSTALLATION_FILE_PREPAYEE',
+              details: `${entry.clientName} (${entry.reservationCode || linkedTicket.ticketNumber}) installé sur Poste ${targetStation.id} sans double facturation · Wi-Fi ${updatedVoucher?.code || 'N/A'} prolongé jusqu'à fin session`,
+              stationId: targetStation.id,
+            },
+            ...prev.auditLogs,
+          ],
+        }));
+
+        if (updatedVoucher) {
+          void syncWifiVoucherToMikrotik(updatedVoucher, 'UPDATE', appState.settings);
+        }
+        void syncTicketToServer(updatedTicket);
+        soundService.playTicketSuccess();
+        setSystemToast({
+          type: 'success',
+          message: `${entry.clientName} installé sur ${targetStation.name} (Ticket prépayé ${updatedTicket.ticketNumber}).`,
+        });
+        return;
+      }
+    }
 
     setAppState((prev) => ({
       ...prev,
-      queue: prev.queue.filter(q => q.id !== entry.id),
+      queue: prev.queue.filter((q) => q.id !== entry.id),
     }));
 
     setSelectedStationForTicket(targetStation);
@@ -2210,8 +2423,458 @@ export default function App() {
   const handleRemoveFromQueue = (entryId: string, reason: 'no_show' | 'cancelled') => {
     setAppState((prev) => ({
       ...prev,
-      queue: prev.queue.filter(q => q.id !== entryId),
+      queue: prev.queue.filter((q) => q.id !== entryId),
+      auditLogs: [
+        {
+          id: 'aud-qrm-' + Date.now(),
+          timestamp: Date.now(),
+          userRole: prev.currentRole,
+          cashierName: prev.currentUser,
+          action: reason === 'no_show' ? 'ABSENT_FILE_ATTENTE' : 'ANNULATION_FILE_ATTENTE',
+          details: `Entrée ${entryId} retirée de la file (${reason})`,
+        },
+        ...prev.auditLogs,
+      ],
     }));
+  };
+
+  // 8B. Réservations Espace Client exclusivement (Mobile Money OTP >= 3h + 15% frais)
+  const handleCreateClientReservation = (
+    payload: CreateReservationPayload
+  ): { success: boolean; reservation?: Reservation; message?: string } => {
+    const minResMins = appState.settings.reservationMinMinutes ?? RESERVATION_MIN_MINUTES;
+    if (payload.paymentMode !== 'MOBILE_MONEY') {
+      return {
+        success: false,
+        message: "Les réservations s'effectuent exclusivement par Paiement Mobile depuis l'Espace Client.",
+      };
+    }
+    if (payload.durationMinutes < minResMins) {
+      return {
+        success: false,
+        message: `La réservation Mobile Money depuis l'Espace Client nécessite minimum ${minResMins / 60}h (${minResMins} min).`,
+      };
+    }
+
+    const availability = checkReservationAvailability({
+      stationType: payload.stationType,
+      preferredStationId: payload.preferredStationId,
+      reservedForTime: payload.reservedForTime,
+      durationMinutes: payload.durationMinutes,
+      stations: appState.stations,
+      reservations: appState.reservations || [],
+    });
+    if (!availability.available) {
+      return {
+        success: false,
+        message:
+          availability.reason ||
+          "Ce n'est pas disponible : la date, l'heure ou le poste choisi est occupé.",
+      };
+    }
+
+    const clientId = payload.client?.id || `guest-${Date.now().toString(36)}`;
+    const clientName = payload.client?.fullName || payload.guestName || 'Client Réservation';
+    const clientPhone = payload.client?.phone || payload.guestPhone || '';
+
+    const quote = computeReservationQuote({
+      pricingPlans: appState.pricingPlans,
+      stationType: payload.stationType,
+      durationMinutes: payload.durationMinutes,
+      settings: appState.settings,
+      clientTier: payload.client?.tier,
+      paymentMode: 'MOBILE_MONEY',
+      reservedForTime: payload.reservedForTime,
+    });
+
+    const now = Date.now();
+    const reservationCode = generateReservationCode(
+      (appState.reservations || []).map((r) => r.reservationCode)
+    );
+    const resolvedPaymentMethod: PaymentMethod = payload.paymentMethod || 'MPESA';
+
+    const newReservation: Reservation = {
+      id: 'res-' + now.toString(36),
+      reservationCode,
+      clientId,
+      clientName,
+      clientPhone,
+      stationType: payload.stationType,
+      preferredStationId: payload.preferredStationId,
+      preferredStationName: payload.preferredStationName,
+      durationMinutes: payload.durationMinutes,
+      originalDurationMinutes: payload.durationMinutes,
+      reservedForTime: payload.reservedForTime,
+      createdAt: now,
+      paymentMode: 'MOBILE_MONEY',
+      paymentMethod: resolvedPaymentMethod,
+      paymentReference: payload.paymentReference,
+      payerPhone: payload.payerPhone,
+      otpVerified: payload.otpVerified,
+      baseAmountCDF: quote.baseAmountCDF,
+      baseAmountUSD: quote.baseAmountUSD,
+      reservationFeePercent: quote.feePercent,
+      reservationFeeCDF: quote.reservationFeeCDF,
+      reservationFeeUSD: quote.reservationFeeUSD,
+      totalAmountCDF: quote.totalAmountCDF,
+      totalAmountUSD: quote.totalAmountUSD,
+      paidAt: now,
+      status: 'PAID_WAITING_CHECKIN',
+    };
+
+    setAppState((prev) => {
+      const isIllico = resolvedPaymentMethod === 'ILLICO_CASH';
+      const nextShift: CashShift = {
+        ...prev.currentShift,
+        totalIllicoCashCDF:
+          (prev.currentShift.totalIllicoCashCDF || 0) + (isIllico ? newReservation.totalAmountCDF : 0),
+        totalIllicoCashUSD:
+          (prev.currentShift.totalIllicoCashUSD || 0) + (isIllico ? newReservation.totalAmountUSD : 0),
+        totalMomoCDF: prev.currentShift.totalMomoCDF + (isIllico ? 0 : newReservation.totalAmountCDF),
+        totalMomoUSD: prev.currentShift.totalMomoUSD + (isIllico ? 0 : newReservation.totalAmountUSD),
+      };
+
+      return {
+        ...prev,
+        reservations: [newReservation, ...(prev.reservations || [])],
+        currentShift: nextShift,
+        auditLogs: [
+          {
+            id: 'aud-res-' + now,
+            timestamp: now,
+            userRole: 'CLIENT',
+            cashierName: clientName,
+            action: 'RESERVATION_MOBILE_MONEY',
+            details: `${newReservation.reservationCode} · ${clientName} · ${payload.durationMinutes / 60}h ${payload.stationType} · ${newReservation.totalAmountCDF.toLocaleString()} FC (Payé ${resolvedPaymentMethod}${payload.otpVerified ? ' OTP' : ''} +${quote.feePercent}%)`,
+          },
+          ...prev.auditLogs,
+        ],
+      };
+    });
+
+    void syncReservationToServer(newReservation);
+
+    return {
+      success: true,
+      reservation: newReservation,
+      message: `Paiement reçu ! Code de réservation ${reservationCode} ajouté en File des Réservés. Présentez ce code à l'accueil à l'heure prévue.`,
+    };
+  };
+
+  const handleValidateReservation = (
+    reservationId: string,
+    targetStationId: number | null = null,
+    overrideEarly = false
+  ) => {
+    const res = (appState.reservations || []).find((r) => r.id === reservationId);
+    if (!res) return;
+
+    const now = Date.now();
+    const win = evaluateReservationTimeWindow(res.reservedForTime, now);
+    if (win.status === 'EARLY' && !overrideEarly) {
+      setSystemToast({
+        type: 'warning',
+        message: `Le client ${res.reservationCode} est en avance (${win.label}). Cochez l'autorisation anticipée au guichet pour valider avant l'heure.`,
+      });
+      return;
+    }
+
+    const lateCheck = computeLateDeduction(res.reservedForTime, res.durationMinutes, now);
+    if (lateCheck.isFullyExpired) {
+      const expiredRes: Reservation = {
+        ...res,
+        status: 'EXPIRED',
+        lostLateMinutes: lateCheck.lostLateMinutes,
+        playableDurationMinutes: 0,
+        originalDurationMinutes: res.durationMinutes,
+        timeRespectStatus: 'LATE',
+      };
+      setAppState((prev) => ({
+        ...prev,
+        reservations: (prev.reservations || []).map((r) => (r.id === res.id ? expiredRes : r)),
+        auditLogs: [
+          {
+            id: 'aud-expres-' + now,
+            timestamp: now,
+            userRole: prev.currentRole,
+            cashierName: prev.currentUser,
+            action: 'RESERVATION_EXPIREE_RETARD',
+            details: `Réservation ${res.reservationCode} (${res.clientName}) expirée : retard de ${lateCheck.lostLateMinutes} min >= durée réservée (${res.durationMinutes} min).`,
+          },
+          ...prev.auditLogs,
+        ],
+      }));
+      void syncReservationToServer(expiredRes);
+      setSystemToast({
+        type: 'warning',
+        message: `Réservation ${res.reservationCode} expirée : ${lateCheck.lostLateMinutes} min de retard ont entièrement consommé le temps réservé (${res.durationMinutes} min).`,
+      });
+      return;
+    }
+
+    const playableMinutes = lateCheck.playableDurationMinutes;
+    const lostLateMinutes = lateCheck.lostLateMinutes;
+
+    const matchedStation = targetStationId
+      ? appState.stations.find((s) => s.id === targetStationId && s.status === 'available')
+      : undefined;
+    const isDirectStation = Boolean(matchedStation);
+
+    const randomHex = Array.from(crypto.getRandomValues(new Uint8Array(12)))
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('');
+    const ticketNumber = `TICK-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`;
+    const ticketId = 'tick-' + now.toString(36);
+    const wifiMinMins = appState.settings.wifiMinTicketMinutes ?? WIFI_MIN_TICKET_MINUTES;
+    const endTime = now + playableMinutes * 60000;
+    const paidMaxDevices = getWifiMaxDevicesForDuration(res.durationMinutes);
+
+    const voucher: WifiVoucher | undefined =
+      res.durationMinutes >= wifiMinMins
+        ? createWifiVoucherForTicket({
+            ticketNumber,
+            durationMinutes: playableMinutes,
+            maxDevicesOverride: paidMaxDevices,
+            validFrom: now,
+            expiresAt: endTime,
+            settings: appState.settings,
+            inQueueWaiting: !isDirectStation,
+          })
+        : undefined;
+
+    const newTicket: Ticket = {
+      id: ticketId,
+      ticketNumber,
+      signedToken: `kgh_${now.toString(36)}_${randomHex}`,
+      stationId: matchedStation ? matchedStation.id : 0,
+      stationName: matchedStation ? matchedStation.name : "File d'attente (Prépayé)",
+      stationType: matchedStation ? matchedStation.type : res.stationType,
+      clientId: res.clientId,
+      clientName: res.clientName,
+      clientPhone: res.clientPhone,
+      durationMinutes: playableMinutes,
+      originalDurationMinutes: res.durationMinutes,
+      lostLateMinutes: lostLateMinutes > 0 ? lostLateMinutes : undefined,
+      startTime: now,
+      endTime,
+      amountCDF: res.totalAmountCDF,
+      amountUSD: res.totalAmountUSD,
+      paymentMethod: res.paymentMethod || 'MPESA',
+      paymentReference: res.paymentReference,
+      payerPhone: res.payerPhone || res.clientPhone,
+      cashierName: appState.currentUser,
+      cashierId: appState.currentStaffUser?.id,
+      status: isDirectStation ? 'active' : 'queued',
+      createdAt: now,
+      extendedCount: 0,
+      appliedExchangeRate: appState.settings.exchangeRate,
+      reservationCode: res.reservationCode,
+      reservationFeeCDF: res.reservationFeeCDF,
+      reservationFeeUSD: res.reservationFeeUSD,
+      isQueuedPrepaid: !isDirectStation,
+      wifiVoucher: voucher,
+    };
+
+    if (matchedStation) {
+      const isExempt = isStationShellyExempt(matchedStation.id, appState.settings);
+      if (appState.settings.autoPowerOnWithTicket !== false && !isExempt) {
+        dispatchStationShellyCommand({
+          stationId: matchedStation.id,
+          state: 'ON',
+          target: 'BOTH',
+          device: appState.domotiqueDevices.find((d) => d.stationId === matchedStation.id),
+          topicPrefix: appState.settings.mqttTopicPrefix,
+          reason: `RES_${res.reservationCode}`,
+        });
+      }
+    }
+
+    const updatedReservation: Reservation = {
+      ...res,
+      status: isDirectStation ? 'VALIDATED_ON_STATION' : 'VALIDATED_IN_QUEUE',
+      validatedAt: now,
+      validatedBy: appState.currentUser,
+      originalDurationMinutes: res.durationMinutes,
+      playableDurationMinutes: playableMinutes,
+      lostLateMinutes: lostLateMinutes > 0 ? lostLateMinutes : 0,
+      timeRespectStatus: lostLateMinutes > 0 ? 'LATE' : win.status,
+      stationId: matchedStation?.id,
+      ticketId: newTicket.id,
+      ticketNumber: newTicket.ticketNumber,
+      wifiVoucher: voucher,
+    };
+
+    setAppState((prev) => {
+      const queueEntry: QueueEntry | null = isDirectStation
+        ? null
+        : {
+            id: 'q-res-' + now.toString(36),
+            clientId: res.clientId,
+            clientName: res.clientName,
+            phone: res.clientPhone,
+            desiredStationType: res.stationType,
+            desiredDurationMinutes: playableMinutes,
+            priorityLevel: 'VIP',
+            arrivalTime: now,
+            status: 'waiting',
+            gracePeriodSeconds: 180,
+            reservationId: res.id,
+            reservationCode: res.reservationCode,
+            reservedForTime: res.reservedForTime,
+            prepaidTicketId: newTicket.id,
+            prepaidTicketNumber: newTicket.ticketNumber,
+            wifiVoucher: voucher,
+          };
+
+      const nextStations = matchedStation
+        ? prev.stations.map((st) => {
+            if (st.id !== matchedStation.id) return st;
+            const prevExempt = isStationShellyExempt(st.id, prev.settings);
+            const autoOn = prev.settings.autoPowerOnWithTicket !== false && !prevExempt;
+            return {
+              ...st,
+              status: 'occupied' as const,
+              currentTicketId: newTicket.ticketNumber,
+              clientName: newTicket.clientName,
+              clientPhone: newTicket.clientPhone,
+              clientId: newTicket.clientId,
+              startTime: now,
+              endTime,
+              remainingSeconds: playableMinutes * 60,
+              totalDurationMinutes: playableMinutes,
+              relayState: autoOn ? true : st.relayState,
+              screenRelayState: autoOn ? true : st.screenRelayState,
+              currentWatts: autoOn ? getConsoleWatts(st.type) : st.relayState ? getConsoleWatts(st.type) : 0,
+              lastUpdated: now,
+            };
+          })
+        : prev.stations;
+
+      const nextDevices = matchedStation
+        ? prev.domotiqueDevices.map((d) => {
+            const prevExempt = isStationShellyExempt(matchedStation.id, prev.settings);
+            const autoOn = prev.settings.autoPowerOnWithTicket !== false && !prevExempt;
+            return d.stationId === matchedStation.id && autoOn
+              ? { ...d, state: 'ON' as const, watts: getConsoleWatts(matchedStation.type) }
+              : d;
+          })
+        : prev.domotiqueDevices;
+
+      return {
+        ...prev,
+        stations: nextStations,
+        domotiqueDevices: nextDevices,
+        tickets: [newTicket, ...prev.tickets],
+        queue: queueEntry ? [queueEntry, ...prev.queue] : prev.queue,
+        reservations: (prev.reservations || []).map((r) => (r.id === res.id ? updatedReservation : r)),
+        auditLogs: [
+          {
+            id: 'aud-valres-' + now,
+            timestamp: now,
+            userRole: prev.currentRole,
+            cashierName: prev.currentUser,
+            action: isDirectStation ? 'VALIDATION_RESERVATION_POSTE' : 'VALIDATION_RESERVATION_FILE',
+            details: `Réservation ${res.reservationCode} (${res.clientName}) validée → Ticket ${newTicket.ticketNumber} (${playableMinutes}m${lostLateMinutes > 0 ? `, -${lostLateMinutes}m retard déduit` : ''})${voucher ? ` · Wi-Fi ${voucher.code} (${voucher.maxDevices} app.)` : ''} (${isDirectStation ? `Poste ${matchedStation!.id}` : "File d'attente"})`,
+            stationId: matchedStation?.id,
+          },
+          ...prev.auditLogs,
+        ],
+      };
+    });
+
+    if (voucher) {
+      void syncWifiVoucherToMikrotik(voucher, 'CREATE', appState.settings);
+    }
+    void syncTicketToServer(newTicket);
+    void syncReservationToServer(updatedReservation);
+    soundService.playTicketSuccess();
+    setCurrentPrintingTicket(newTicket);
+  };
+
+  const handleCancelReservation = (reservationId: string) => {
+    const res = (appState.reservations || []).find((r) => r.id === reservationId);
+    if (!res) return;
+    const now = Date.now();
+    const updated: Reservation = {
+      ...res,
+      status: 'CANCELLED',
+      cancelledAt: now,
+      cancelReason: 'STAFF_CANCEL',
+    };
+    setAppState((prev) => ({
+      ...prev,
+      reservations: (prev.reservations || []).map((r) =>
+        r.id === reservationId ? updated : r
+      ),
+      auditLogs: [
+        {
+          id: 'aud-canres-' + now,
+          timestamp: now,
+          userRole: prev.currentRole,
+          cashierName: prev.currentUser,
+          action: 'ANNULATION_RESERVATION',
+          details: `Réservation ${res.reservationCode} (${res.clientName}) annulée par ${prev.currentUser}`,
+        },
+        ...prev.auditLogs,
+      ],
+    }));
+    void syncReservationToServer(updated);
+  };
+
+  const handleCancelClientReservation = (
+    reservationId: string
+  ): { success: boolean; message: string } => {
+    const res = (appState.reservations || []).find((r) => r.id === reservationId);
+    if (!res) {
+      return { success: false, message: 'Réservation introuvable.' };
+    }
+    if (res.status !== 'PAID_WAITING_CHECKIN') {
+      return {
+        success: false,
+        message: 'Cette réservation ne peut plus être annulée (déjà validée, expirée ou annulée).',
+      };
+    }
+
+    const now = Date.now();
+    const cancelCheck = canCancelReservationClient(res.reservedForTime, now);
+    if (!cancelCheck.canCancel) {
+      return {
+        success: false,
+        message:
+          "Annulation impossible : vous devez annuler au minimum 1 heure (60 min) avant l'heure prévue de votre réservation.",
+      };
+    }
+
+    const updated: Reservation = {
+      ...res,
+      status: 'CANCELLED',
+      cancelledAt: now,
+      cancelReason: 'CLIENT_SELF_CANCEL',
+    };
+
+    setAppState((prev) => ({
+      ...prev,
+      reservations: (prev.reservations || []).map((r) =>
+        r.id === reservationId ? updated : r
+      ),
+      auditLogs: [
+        {
+          id: 'aud-clicanres-' + now,
+          timestamp: now,
+          userRole: 'CLIENT',
+          cashierName: res.clientName,
+          action: 'ANNULATION_RESERVATION_CLIENT',
+          details: `Réservation ${res.reservationCode} (${res.clientName}) annulée depuis l'Espace Client (> 1h avant l'heure prévue).`,
+        },
+        ...prev.auditLogs,
+      ],
+    }));
+    void syncReservationToServer(updated);
+
+    return {
+      success: true,
+      message: `Réservation ${res.reservationCode} annulée avec succès (dans le délai >= 1h avant l'heure prévue).`,
+    };
   };
 
   // 9. Inscription Client (Ticket 3H obligatoire) & Parrainage Anti-Fraude (max 5 car.)
@@ -2569,11 +3232,21 @@ export default function App() {
 
       const updatedTickets = prev.tickets.map((t) => {
         if (t.id === ticket.id) {
+          const nextEnd = Date.now() + 300000;
+          const restoredVoucher: WifiVoucher | undefined = t.wifiVoucher
+            ? { ...t.wifiVoucher, status: 'ACTIVE', expiresAt: nextEnd, inQueueWaiting: false }
+            : undefined;
+          if (restoredVoucher) {
+            setTimeout(() => {
+              void syncWifiVoucherToMikrotik(restoredVoucher, 'CREATE', prev.settings);
+            }, 0);
+          }
           const restored: Ticket = {
             ...t,
             status: 'active' as const,
             actualEndTime: undefined,
             autoReleaseCancelledAt: Date.now(),
+            wifiVoucher: restoredVoucher,
           };
           setTimeout(() => {
             void syncTicketToServer(restored);
@@ -3532,33 +4205,26 @@ export default function App() {
     return (
       <div className="relative min-h-screen w-full bg-[#090D16] text-slate-100 flex flex-col font-sans overflow-x-hidden">
         {renderGlobalBackground()}
-        <header className="bg-slate-900/95 backdrop-blur-md border-b border-slate-800 sticky top-0 z-40 w-full px-4 sm:px-6 lg:px-8 py-3">
-          <div className="w-full flex items-center justify-between gap-4">
-            <div className="flex flex-col">
+        <header className="bg-slate-900/95 backdrop-blur-md border-b border-slate-800 sticky top-0 z-40 w-full px-3 sm:px-6 lg:px-8 py-2.5 sm:py-3">
+          <div className="w-full max-w-5xl mx-auto flex items-center justify-between gap-3">
+            <div className="flex flex-col min-w-0">
               <GozaWordmark name={appState.settings.venueName || 'GOZA'} size="md" accent="amber" />
-              <div className="text-[10px] text-amber-400 font-mono font-bold tracking-wider pl-11 -mt-0.5">
+              <div className="text-[10px] text-amber-400 font-mono font-bold tracking-wider pl-10 sm:pl-11 -mt-0.5 truncate">
                 ESPACE CLIENT PERSONNEL
               </div>
             </div>
-
-            <button
-              type="button"
-              onClick={() => {
-                setAppState((prev) => ({ ...prev, activeCustomerPortalClientId: null }));
-                setActiveTab('login');
-              }}
-              className="px-3.5 py-2 bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/40 rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
-            >
-              <LogOut className="w-3.5 h-3.5" />
-              <span>Déconnexion</span>
-            </button>
           </div>
         </header>
 
-        <main className="relative z-10 flex-1 w-full px-4 sm:px-6 lg:px-8 py-4 lg:py-6">
+        <main className="relative z-10 flex-1 w-full px-3 sm:px-6 lg:px-8 py-3 sm:py-5">
           <CustomerPortalView
             clients={appState.clients}
             queue={appState.queue}
+            stations={appState.stations}
+            reservations={appState.reservations || []}
+            tickets={appState.tickets}
+            pricingPlans={appState.pricingPlans}
+            settings={appState.settings}
             tierRules={appState.tierRules}
             initialClientId={appState.activeCustomerPortalClientId}
             onLogout={() => {
@@ -3567,6 +4233,8 @@ export default function App() {
             }}
             onClientCreatePin={handleClientCreatePin}
             onClientUpdateAvatar={handleClientUpdateAvatar}
+            onCreateReservation={handleCreateClientReservation}
+            onCancelReservation={handleCancelClientReservation}
           />
         </main>
       </div>
@@ -3696,7 +4364,7 @@ export default function App() {
         onSyncNow={handleSyncNow}
       />
 
-      <div className="relative z-10 flex-1 w-full flex flex-col md:flex-row">
+      <div className="relative z-10 flex-1 w-full flex flex-col lg:flex-row">
         {navLayout === 'sidebar' && (
           <SidebarNav
             activeTab={activeTab}
@@ -3869,8 +4537,8 @@ export default function App() {
         </div>
       )}
 
-      {/* Contenu Principal Plein Écran */}
-      <main className="relative z-10 flex-1 w-full px-4 sm:px-6 lg:px-8 py-4 lg:py-6 space-y-6">
+      {/* Contenu Principal Plein Écran (Phone → Tablet → Laptop → Monitor → TV) */}
+      <main className="relative z-10 flex-1 w-full max-w-[2400px] mx-auto px-3 sm:px-6 lg:px-8 2xl:px-10 py-3 sm:py-4 lg:py-6 space-y-5 sm:space-y-6">
           <>
             {/* Onglet 0 : Tableau de bord Exécutif & Opérationnel GOZA */}
             {activeTab === 'dashboard' && (
@@ -3951,7 +4619,7 @@ export default function App() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3.5 2xl:gap-4">
               {appState.stations.map((station) => (
                 <StationCard
                   key={station.id}
@@ -3995,7 +4663,15 @@ export default function App() {
                     ...prev,
                     tickets: prev.tickets.map((t) => {
                       if (t.id === ticketId) {
-                        const refunded: Ticket = { ...t, status: 'refunded' as const };
+                        const revokedVoucher: WifiVoucher | undefined = t.wifiVoucher
+                          ? { ...t.wifiVoucher, status: 'REVOKED', expiresAt: Date.now(), inQueueWaiting: false }
+                          : undefined;
+                        if (revokedVoucher) {
+                          setTimeout(() => {
+                            void syncWifiVoucherToMikrotik(revokedVoucher, 'REVOKE', prev.settings);
+                          }, 0);
+                        }
+                        const refunded: Ticket = { ...t, status: 'refunded' as const, wifiVoucher: revokedVoucher };
                         setTimeout(() => {
                           void syncTicketToServer(refunded);
                         }, 0);
@@ -4021,16 +4697,22 @@ export default function App() {
           />
         )}
 
-        {/* Onglet 3 : File d'attente */}
+        {/* Onglet 3 : File d'attente & Réservations */}
         {activeTab === 'queue' && (
           <QueueView
             queue={appState.queue}
             stations={appState.stations}
+            clients={appState.clients}
+            pricingPlans={appState.pricingPlans}
+            settings={appState.settings}
+            reservations={appState.reservations || []}
             onAddToQueue={handleAddToQueue}
             onCallClient={handleCallQueueClient}
             onAssignToStation={handleAssignToStation}
             onRemoveFromQueue={handleRemoveFromQueue}
             onSendWhatsAppDirect={handleSendWhatsAppDirect}
+            onValidateReservation={handleValidateReservation}
+            onCancelReservation={handleCancelReservation}
           />
         )}
 
@@ -4207,10 +4889,18 @@ export default function App() {
           <CustomerPortalView
             clients={appState.clients}
             queue={appState.queue}
+            stations={appState.stations}
+            reservations={appState.reservations || []}
+            tickets={appState.tickets}
+            pricingPlans={appState.pricingPlans}
+            settings={appState.settings}
             tierRules={appState.tierRules}
+            initialClientId={appState.activeCustomerPortalClientId}
             onLogout={() => setActiveTab('stations')}
             onClientCreatePin={handleClientCreatePin}
             onClientUpdateAvatar={handleClientUpdateAvatar}
+            onCreateReservation={handleCreateClientReservation}
+            onCancelReservation={handleCancelClientReservation}
           />
         )}
 
@@ -4285,7 +4975,9 @@ export default function App() {
       {/* Modal Express Ticket (< 15s) avec remises automatiques selon statut */}
       <FastTicketModal
         isOpen={isTicketModalOpen}
-        onClose={() => setIsTicketModalOpen(false)}
+        onClose={() => {
+          setIsTicketModalOpen(false);
+        }}
         station={selectedStationForTicket}
         allStations={appState.stations}
         pricingPlans={appState.pricingPlans}
@@ -4307,8 +4999,8 @@ export default function App() {
 
       {/* Modal Transfert Client vers Poste Libre */}
       {transferModalStation && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
-          <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-md p-5 space-y-4 shadow-2xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-md max-h-[90vh] overflow-y-auto p-4 sm:p-5 space-y-4 shadow-2xl">
             <div className="flex items-center justify-between">
               <h3 className="text-base font-bold text-white flex items-center gap-2">
                 <ArrowRightLeft className="w-5 h-5 text-blue-400" />
@@ -4720,8 +5412,8 @@ export default function App() {
 
       {/* Modal de Confirmation In-App (remplace window.confirm bloqué dans l'iframe) */}
       {confirmModal && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
-          <div className={`bg-slate-900 border ${confirmModal.danger ? 'border-rose-500/70' : 'border-slate-700'} rounded-2xl w-full max-w-md p-6 space-y-4 shadow-2xl`}>
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+          <div className={`bg-slate-900 border ${confirmModal.danger ? 'border-rose-500/70' : 'border-slate-700'} rounded-2xl w-full max-w-md max-h-[90vh] overflow-y-auto p-5 sm:p-6 space-y-4 shadow-2xl`}>
             <div className="flex items-start gap-3">
               <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${confirmModal.danger ? 'bg-rose-500/15 border border-rose-500/40 text-rose-400' : 'bg-blue-500/15 border border-blue-500/40 text-blue-400'}`}>
                 <AlertTriangle className="w-5 h-5" />

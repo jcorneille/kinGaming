@@ -11,6 +11,7 @@ import {
   Calendar,
   ArrowLeft,
   RefreshCw,
+  Wifi,
 } from 'lucide-react';
 
 interface PublicTicketVerificationViewProps {
@@ -152,9 +153,12 @@ export const PublicTicketVerificationView: React.FC<PublicTicketVerificationView
 
   // Calcul du temps restant en direct
   const station = stations.find((s) => s.id === ticket.stationId);
+  const isQueuedTicket = ticket.status === 'queued';
   const isRunningStatus = ticket.status === 'active' || ticket.status === 'extended';
   const remainingSeconds = isRunningStatus
     ? Math.max(0, Math.floor((ticket.endTime - currentTime) / 1000))
+    : isQueuedTicket
+    ? ticket.durationMinutes * 60
     : 0;
 
   const remainingMins = Math.floor(remainingSeconds / 60);
@@ -209,12 +213,14 @@ export const PublicTicketVerificationView: React.FC<PublicTicketVerificationView
             <span className="text-[11px] uppercase tracking-wider font-semibold">
               {ticket.status === 'refunded'
                 ? 'Ticket Remboursé / Annulé'
+                : isQueuedTicket
+                ? "Validé & En File d'Attente · Temps réservé intact"
                 : isRunningStatus && remainingSeconds > 0
                 ? 'Session en cours · Temps Restant Direct'
                 : 'Session Terminée'}
             </span>
             <div className="text-3xl font-black font-mono tracking-tight">
-              {isRunningStatus && remainingSeconds > 0
+              {(isRunningStatus && remainingSeconds > 0) || isQueuedTicket
                 ? `${String(remainingMins).padStart(2, '0')}:${String(remainingSecs).padStart(2, '0')}`
                 : '00:00'}
             </div>
@@ -225,11 +231,68 @@ export const PublicTicketVerificationView: React.FC<PublicTicketVerificationView
             )}
           </div>
 
+          {ticket.wifiVoucher && (ticket.durationMinutes >= 60 || (ticket.originalDurationMinutes || 0) >= 60) && (
+            <div
+              className={`p-4 rounded-2xl border space-y-2 ${
+                ticket.wifiVoucher.status === 'ACTIVE' && (isRunningStatus || isQueuedTicket)
+                  ? 'bg-cyan-950/35 border-cyan-500/40'
+                  : 'bg-slate-800/50 border-slate-700 opacity-75'
+              }`}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-bold text-cyan-300 flex items-center gap-1.5">
+                  <Wifi className="w-4 h-4" />
+                  <span>
+                    Code Wi-Fi Client ({ticket.wifiVoucher.maxDevices}{' '}
+                    {ticket.wifiVoucher.maxDevices > 1 ? 'Appareils Max' : 'Appareil Max'})
+                  </span>
+                </span>
+                <span
+                  className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
+                    ticket.wifiVoucher.status === 'ACTIVE' && (isRunningStatus || isQueuedTicket)
+                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                      : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                  }`}
+                >
+                  {ticket.wifiVoucher.status === 'ACTIVE' && (isRunningStatus || isQueuedTicket)
+                    ? 'ACTIF'
+                    : 'EXPIRÉ'}
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-2 bg-slate-950/80 rounded-xl px-3.5 py-2.5 border border-slate-800">
+                <div>
+                  <div className="text-[10px] text-slate-400">SSID : <strong className="text-white">{ticket.wifiVoucher.ssid}</strong></div>
+                  <div className="text-lg font-mono font-black tracking-widest text-cyan-300">
+                    {ticket.wifiVoucher.code}
+                  </div>
+                </div>
+                <div className="text-right text-[10px] text-slate-300">
+                  <div className="font-bold text-amber-300">
+                    {ticket.wifiVoucher.maxDevices}{' '}
+                    {ticket.wifiVoucher.maxDevices > 1 ? 'appareils simultanés max' : 'appareil uniquement'}
+                  </div>
+                  <div>
+                    {isQueuedTicket
+                      ? "Actif en file d'attente — expirera à la fin de votre partie"
+                      : `Expire à la fin de session (${formatTime(ticket.endTime)})`}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Grille des caractéristiques */}
           <div className="bg-slate-950/60 rounded-2xl p-4 border border-slate-800/80 space-y-3 font-sans">
             <div className="flex items-center justify-between pb-2 border-b border-slate-800">
               <span className="text-slate-400">Numéro de Ticket :</span>
-              <span className="font-mono font-bold text-white text-sm">{ticket.ticketNumber}</span>
+              <span className="font-mono font-bold text-white text-sm">
+                {ticket.ticketNumber}
+                {ticket.reservationCode && (
+                  <span className="ml-2 text-[10px] px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                    {ticket.reservationCode}
+                  </span>
+                )}
+              </span>
             </div>
 
             <div className="flex items-center justify-between pb-2 border-b border-slate-800">
@@ -239,7 +302,9 @@ export const PublicTicketVerificationView: React.FC<PublicTicketVerificationView
               </span>
               <div className="text-right">
                 <span className="font-bold text-cyan-300 font-mono text-sm">
-                  {station?.name || ticket.stationName || `Poste ${ticket.stationId}`} ({ticket.stationType})
+                  {isQueuedTicket || ticket.stationId === 0
+                    ? `En file d'attente (${ticket.stationType})`
+                    : `${station?.name || ticket.stationName || `Poste ${ticket.stationId}`} (${ticket.stationType})`}
                 </span>
                 {ticket.transferredFromStationId && (
                   <div className="text-[10px] text-amber-300 font-mono">
@@ -268,6 +333,11 @@ export const PublicTicketVerificationView: React.FC<PublicTicketVerificationView
               </span>
               <div className="text-right">
                 <div className="font-bold text-white">{ticket.durationMinutes} Minutes</div>
+                {ticket.lostLateMinutes && ticket.lostLateMinutes > 0 && (
+                  <div className="text-[10px] font-mono text-amber-300">
+                    ({ticket.originalDurationMinutes}m réservés · -{ticket.lostLateMinutes}m retard)
+                  </div>
+                )}
                 <div className="text-[10px] font-mono text-slate-400">
                   {formatTime(ticket.startTime)} &rarr; {formatTime(ticket.endTime)}
                 </div>

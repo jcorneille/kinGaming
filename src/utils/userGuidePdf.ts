@@ -157,9 +157,9 @@ export async function downloadFullWebAppGuidePdf({
         'Garantit 0 ms de latence sur la caisse et les consoles sans saturer le Wi-Fi des relais Shelly.',
       ],
       [
-        '3. Wi-Fi 2.4 GHz IoT (GOZA-IoT)',
-        'Radio 2.4 GHz uniquement (20 MHz, canal 1/6/11), meme Bridge LAN, Client Isolation DESACTIVEE.',
-        'Relie tous les Shelly (.121-.143) + Capteur Temperature (.144) au PC Caissier meme sans Internet.',
+        '3. Wi-Fi 2.4G IoT + VLAN Hotspot GOZA-WiFi',
+        'SSID 1 : GOZA-IoT (Shelly .121-.144). SSID 2 : GOZA-WiFi (VLAN 50 / ether4 AP PoE 48V, Hotspot shared-users=1..4, REST API).',
+        'Isole les joueurs des prises Shelly et attribue les appareils Wi-Fi selon la duree (1h:1, 3h:2, 4h:3, 5h+:4 app.).',
       ],
       [
         '4. Baux DHCP Statiques',
@@ -167,9 +167,9 @@ export async function downloadFullWebAppGuidePdf({
         'Empeche qu\'un relais ou le capteur change d\'IP apres une coupure SNEL.',
       ],
       [
-        '5. Local + A Distance (WireGuard/Cloud)',
-        'Local : 100% autonome via MikroTik. Distance : Portails Cloud GOZA ou tunnel WireGuard integre au MikroTik.',
-        'Le Gerant supervise recettes, postes et climatisation aussi bien sur place que depuis l\'exterieur.',
+        '5. Local + Distance + Espace Client OTP 3h+',
+        'Local : 100% autonome via MikroTik. Distance : Cloud GOZA / VPN WireGuard + Reservations Espace Client Mobile Money OTP (>= 3h, +15%, annulable >= 1h avant).',
+        'Pas de reservation sur place : le client reserve en ligne et le retard est auto-deduit au guichet.',
       ],
     ],
     theme: 'striped',
@@ -322,10 +322,22 @@ export async function downloadFullWebAppGuidePdf({
         'IMPORTANT : Cable les 8 PS4 + 2 PS5 en RJ45 sans saturer le Wi-Fi 2.4GHz IoT des Shelly.',
       ],
       [
-        'Imprimante Thermique 80mm + Tiroir-Caisse',
-        'Cable USB/LAN sur PC + RJ11 Tiroir',
-        'Impression ESC/POS',
-        'IMPORTANT : Edite les tickets joueurs avec QR Code anti-fraude et ouvre le tiroir especes.',
+        'Imprimante 80mm + Lecteur QR 2D USB + Tiroir',
+        'USB/LAN Imprimante + USB Lecteur QR + RJ11',
+        'Caisse & Check-in',
+        'IMPORTANT : Edite les tickets QR et scanne RES-XXXX en 1s a l\'accueil (avec calcul automatique du retard).',
+      ],
+      [
+        'Portail Captif + Borne AP PoE 48V Haute Densite',
+        'ether4 MikroTik (VLAN 50 -> GOZA-WiFi)',
+        'REST API /ip/hotspot',
+        'IMPORTANT : Code Wi-Fi >= 1h actif des l\'impression (file incluse) jusqu\'a la fin : 1h-2h: 1 app. | 3h: 2 app. | 4h: 3 app. | 5h+: 4 app.',
+      ],
+      [
+        'Baie Reseau 6U Ventilee + Mini-UPS + AVR Clims',
+        'Coffret 6U + Mini-UPS <10ms + Parafoudre Type 2',
+        'Protection Materielle',
+        'RECOMMANDE : Protege Starlink/MikroTik/Switch des coupures & poussieres, et securise les 2 clims contre les surtensions SNEL.',
       ],
       ...stationRows,
       ...ambientRows,
@@ -370,9 +382,9 @@ export async function downloadFullWebAppGuidePdf({
         'Aucun pilotage ticket automatique (utilisation manuelle / VIP / tournois).',
       ],
       [
-        'Clim 1 (.141) & Clim 2 (.142) + Contacteur 25A',
-        'Disj. 25A : Phase L -> Contacteur 1(L1)->2(T1)->Clim ; Neutre N -> Contacteur 3(L2)->4(T2)->Clim ; Terre PE -> Clim. Shelly 1PM : L & N en entree, Sortie O -> bobine A1 du contacteur, N -> bobine A2.',
-        'Shelly commande en Wi-Fi 2.4GHz GOZA-IoT (.141 et .142) sur horaires 09h00-23h30 + delestage sur coupure SNEL.',
+        'Clim 1 (.141) & Clim 2 (.142) + AVR + Contacteur 25A',
+        'Disj. 25A + Parafoudre/AVR -> Contacteur 25A (L1/L2->T1/T2->Clim). Shelly 1PM : L & N en entree, Sortie O -> bobine A1, N -> bobine A2.',
+        'Shelly commande en Wi-Fi 2.4GHz GOZA-IoT (.141 et .142) selon seuils C configurables + delestage sur coupure SNEL.',
       ],
       [
         'Eclairage Neon/LED (.140) & Extracteur (.143)',
@@ -381,13 +393,13 @@ export async function downloadFullWebAppGuidePdf({
       ],
       [
         'Capteur Temperature (.144) & Switch 16 Ports',
-        'Capteur sur USB-C 5V (ou Add-On sur Shelly Clim). Switch sur Multiprise Onduleur 230V (Disj. 10A).',
+        'Capteur sur USB-C 5V (ou Add-On sur Shelly Clim). Switch sur PDU Baie 6U + Mini-UPS <10ms (Disj. 10A).',
         'Capteur en Wi-Fi 2.4GHz (.144) -> Thermostat GOZA. Switch en RJ45 Cat6 (ether3 -> 8 PS4 + 2 PS5).',
       ],
       [
-        'Starlink + MikroTik + PC GOZA + Imprimante 80mm',
-        'Cables Courant 230V (Disj. 10A Onduleur + Batterie 15-20 kWh) -> Multiprise parafoudre.',
-        'Cables RJ45 Cat6 (Starlink->ether1, ether2->PC .100) | Cable USB/LAN (Imprimante 80mm) | Cable RJ11 (Tiroir).',
+        'Starlink + MikroTik + PC + Imp. 80mm + Scanner QR 2D',
+        'Cables Courant 230V (Disj. 10A Onduleur + Batterie 15-20 kWh) -> Mini-UPS <10ms -> PDU Baie 6U.',
+        'RJ45 Cat6 (Starlink->ether1, ether2->PC .100, ether4->PoE AP) | USB/LAN Imp. 80mm | USB Lecteur QR 2D | RJ11 Tiroir.',
       ],
     ],
     theme: 'grid',
@@ -511,9 +523,9 @@ export async function downloadFullWebAppGuidePdf({
         'Historique pagine (10/page) des tickets. Recherche par N° ticket, client, telephone ou reference paiement ; filtres statut & poste ; Reimpression thermique 80mm QR, Transfert ou Remboursement.',
       ],
       [
-        '4. File d\'attente',
+        '4. File d\'attente & Reserves',
         'Tous',
-        'Ajout joueur (nom, +243, console PS4/PS5/Indifferent, duree, priorite Normal ou VIP), estimation attente automatique, boutons Appeler (voix + WhatsApp), Assigner au poste libre, No-Show / Annuler.',
+        'Validation guichet (scan QR ou code RES-XXXX) des reservations effectuees exclusivement dans l\'Espace Client en Mobile Money + OTP (>= 3h + 15%, annulables >= 1h avant ; pas de reservation sur place). Deduction auto des minutes de retard, impression ticket + Wi-Fi multi-appareils.',
       ],
       [
         '5. Fidelite & Statuts',
@@ -594,7 +606,7 @@ export async function downloadFullWebAppGuidePdf({
       [
         'Portail Client Joueur',
         '/?tab=client (Telephone + PIN)',
-        'Consulter solde points & minutes gratuites, progression vers Fidele/VIP, code parrain 5 caracteres, historique sessions, photo ronde multi-formats.',
+        'Reservation 100% en ligne par Mobile Money + code OTP (>= 3h min, +15% frais, choix heure -> code RES-XXXX, annulation possible >= 1h avant ; aucun paiement sur place). Affiche le code Wi-Fi progressif (1h:1, 3h:2, 4h:3, 5h+:4 appareils), points & parrainage.',
       ],
       [
         'Verification Ticket QR',

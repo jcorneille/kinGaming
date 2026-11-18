@@ -25,6 +25,7 @@ import {
   ScheduledSettingChange,
   PaymentMethod,
   TimeSlotPricingRule,
+  Reservation,
 } from '../types';
 import { DEFAULT_TIER_RULES, getISOWeekKey } from './tierEngine';
 import { generateUniqueReferralCode, isValidReferralCodeFormat } from './referralCode';
@@ -39,6 +40,7 @@ export interface AppState {
   clients: Client[];
   loyaltyTransactions: LoyaltyTransaction[];
   queue: QueueEntry[];
+  reservations: Reservation[];
   domotiqueDevices: DomotiqueDevice[];
   currentShift: CashShift;
   shiftHistory: CashShift[];
@@ -272,6 +274,12 @@ export const DEFAULT_SETTINGS: SystemSettings = {
   operatingHours: { open: '09:00', close: '23:00' },
   timezone: 'Africa/Kinshasa',
   language: 'fr',
+  hotspotSsid: 'GOZA-WiFi',
+  mikrotikHotspotHost: '192.168.1.1',
+  mikrotikHotspotUser: 'goza-api',
+  reservationFeePercent: 15,
+  reservationMinMinutes: 180,
+  wifiMinTicketMinutes: 60,
 
   // Section 10: Sécurité et utilisateurs
   autoLogoutInactivityMinutes: 10, // Déconnexion automatique après inactivité
@@ -838,6 +846,17 @@ const INITIAL_TICKETS: Ticket[] = [
     status: 'active',
     createdAt: now - 22 * 60000,
     extendedCount: 0,
+    wifiVoucher: {
+      code: 'GZ-7K9P2M',
+      ssid: 'GOZA-WiFi',
+      validFrom: now - 22 * 60000,
+      expiresAt: now + 38 * 60000,
+      maxDevices: 1,
+      singleUseDeviceBound: true,
+      status: 'ACTIVE',
+      ticketNumber: 'TICK-2026-001',
+      mikrotikSynced: true,
+    },
   },
   {
     id: 'tick-2',
@@ -885,6 +904,44 @@ const INITIAL_TICKETS: Ticket[] = [
     status: 'active',
     createdAt: now - 10 * 60000,
     extendedCount: 0,
+    wifiVoucher: {
+      code: 'GZ-4R8V6N',
+      ssid: 'GOZA-WiFi',
+      validFrom: now - 10 * 60000,
+      expiresAt: now + 50 * 60000,
+      maxDevices: 1,
+      singleUseDeviceBound: true,
+      status: 'ACTIVE',
+      ticketNumber: 'TICK-2026-003',
+      mikrotikSynced: true,
+    },
+  },
+];
+
+const INITIAL_RESERVATIONS: Reservation[] = [
+  {
+    id: 'res-init-1',
+    reservationCode: 'RES-3042',
+    clientId: 'cli-4',
+    clientName: 'Cedrick Mbemba',
+    clientPhone: '+243 99 456 7890',
+    stationType: 'PS5',
+    durationMinutes: 180,
+    reservedForTime: now + 10 * 60000,
+    createdAt: now - 35 * 60000,
+    paymentMode: 'MOBILE_MONEY',
+    paymentMethod: 'MPESA',
+    paymentReference: 'MP-RES-88412',
+    payerPhone: '+243994567890',
+    baseAmountCDF: 21000,
+    baseAmountUSD: 7.5,
+    reservationFeePercent: 15,
+    reservationFeeCDF: 3200,
+    reservationFeeUSD: 1.14,
+    totalAmountCDF: 24200,
+    totalAmountUSD: 8.64,
+    paidAt: now - 35 * 60000,
+    status: 'PAID_WAITING_CHECKIN',
   },
 ];
 
@@ -1120,6 +1177,9 @@ export function loadAppState(): AppState {
     if (!Array.isArray(parsed.scheduledSettings)) {
       parsed.scheduledSettings = [];
     }
+    if (!Array.isArray(parsed.reservations)) {
+      parsed.reservations = initial.reservations;
+    }
     if (parsed.settings && parsed.settings.voiceAlertsEnabled === undefined) {
       parsed.settings.voiceAlertsEnabled = true;
     }
@@ -1346,6 +1406,7 @@ function createInitialState(): AppState {
       },
     ],
     queue: INITIAL_QUEUE,
+    reservations: INITIAL_RESERVATIONS,
     domotiqueDevices: INITIAL_DOMOTIQUE,
     currentShift: INITIAL_SHIFT,
     shiftHistory: [],

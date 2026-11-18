@@ -50,10 +50,73 @@ export type PaymentMethod =
 
 export type TicketStatus = 
   | 'active' 
+  | 'queued'
   | 'completed' 
   | 'extended' 
   | 'cancelled' 
   | 'refunded';
+
+export interface WifiVoucher {
+  code: string;
+  ssid: string;
+  validFrom: number;
+  expiresAt: number;
+  maxDevices: number;
+  singleUseDeviceBound?: boolean;
+  status: 'ACTIVE' | 'EXPIRED' | 'REVOKED';
+  inQueueWaiting?: boolean;
+  ticketNumber?: string;
+  mikrotikSynced?: boolean;
+}
+
+export type ReservationStatus =
+  | 'PAID_WAITING_CHECKIN'
+  | 'PAY_ON_SITE_PENDING'
+  | 'VALIDATED_IN_QUEUE'
+  | 'VALIDATED_ON_STATION'
+  | 'EXPIRED'
+  | 'CANCELLED';
+
+export interface Reservation {
+  id: string;
+  reservationCode: string;
+  clientId: string;
+  clientName: string;
+  clientPhone: string;
+  stationType: StationType;
+  durationMinutes: number;
+  originalDurationMinutes?: number;
+  playableDurationMinutes?: number;
+  lostLateMinutes?: number;
+  reservedForTime: number;
+  createdAt: number;
+  paymentMode: 'MOBILE_MONEY' | 'CASH' | 'PAY_ON_SITE';
+  paymentMethod?: PaymentMethod;
+  paymentReference?: string;
+  payerPhone?: string;
+  otpVerified?: boolean;
+  baseAmountCDF: number;
+  baseAmountUSD: number;
+  reservationFeePercent: number;
+  reservationFeeCDF: number;
+  reservationFeeUSD: number;
+  totalAmountCDF: number;
+  totalAmountUSD: number;
+  paidAt?: number;
+  status: ReservationStatus;
+  validatedAt?: number;
+  validatedBy?: string;
+  cancelledAt?: number;
+  cancelReason?: string;
+  timeRespectStatus?: 'ON_TIME' | 'EARLY' | 'LATE';
+  ticketId?: string;
+  ticketNumber?: string;
+  stationId?: number;
+  preferredStationId?: number;
+  preferredStationName?: string;
+  queueEntryId?: string;
+  wifiVoucher?: WifiVoucher;
+}
 
 export interface MixedPaymentBreakdown {
   cashCDF?: number;
@@ -79,6 +142,8 @@ export interface Ticket {
   clientPhone?: string;
   clientId?: string;
   durationMinutes: number;
+  originalDurationMinutes?: number;
+  lostLateMinutes?: number;
   startTime: number;
   endTime: number;
   actualEndTime?: number; // Heure réelle de libération
@@ -110,6 +175,11 @@ export interface Ticket {
   appliedPromoCode?: string;
   appliedPromoDiscountCDF?: number;
   transferredFromStationId?: number;
+  wifiVoucher?: WifiVoucher;
+  reservationCode?: string;
+  reservationFeeCDF?: number;
+  reservationFeeUSD?: number;
+  isQueuedPrepaid?: boolean;
 }
 
 // 2.14 Statuts Clients : Nouveau → Régulier → Fidèle → VIP
@@ -230,6 +300,12 @@ export interface QueueEntry {
   status: 'waiting' | 'called' | 'seated' | 'no_show' | 'cancelled';
   calledAt?: number;
   gracePeriodSeconds: number; // e.g. 180s (3 min)
+  reservationId?: string;
+  reservationCode?: string;
+  reservedForTime?: number;
+  prepaidTicketId?: string;
+  prepaidTicketNumber?: string;
+  wifiVoucher?: WifiVoucher;
 }
 
 export interface DomotiqueDevice {
@@ -519,6 +595,12 @@ export interface SystemSettings {
   operatingHours: { open: string; close: string };
   timezone: string;
   language: string;
+  hotspotSsid?: string;
+  mikrotikHotspotHost?: string;
+  mikrotikHotspotUser?: string;
+  reservationFeePercent?: number;
+  reservationMinMinutes?: number;
+  wifiMinTicketMinutes?: number;
 
   // Section 10: Sécurité et utilisateurs
   autoLogoutInactivityMinutes: number; // déconnexion auto après inactivité (défaut: 10 min)

@@ -495,7 +495,7 @@ export const FastTicketModal: React.FC<FastTicketModalProps> = ({
                 Tarif {currentStation.type} {pricing.timeSlot.rule ? `· ${pricing.timeSlot.label}` : ''}
               </span>
             </label>
-            <div className="grid grid-cols-5 gap-2">
+            <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
               {availablePlans.map((plan) => {
                 const isSelected = selectedDuration === plan.durationMinutes;
                 const planPrice = computeDynamicTicketPrice({
@@ -802,52 +802,41 @@ export const FastTicketModal: React.FC<FastTicketModalProps> = ({
               </div>
             )}
 
-            <div className="grid grid-cols-4 gap-1.5 mb-3">
-              {[
-                { id: 'CASH_CDF', label: 'Espèces FC' },
-                { id: 'CASH_USD', label: 'Espèces USD ($)' },
-                { id: 'ILLICO_CASH', label: 'Illico Cash' },
-                { id: 'MIXED', label: 'Paiement Mixte' },
-                { id: 'MPESA', label: 'M-Pesa' },
-                { id: 'ORANGE_MONEY', label: 'Orange Money' },
-                { id: 'AIRTEL_MONEY', label: 'Airtel Money' },
-                { id: 'LOYALTY_POINTS', label: 'Points Fidélité' },
-              ].map((pm) => {
-                const isSelected = paymentMethod === pm.id;
-                const isDisabled =
-                  pm.id === 'LOYALTY_POINTS' && (!selectedClient || selectedClient.loyaltyPoints < pointsCost);
-                return (
-                  <button
-                    key={pm.id}
-                    type="button"
-                    disabled={isDisabled}
-                    onClick={() => {
-                      setPaymentMethod(pm.id as PaymentMethod);
-                      setValidationError('');
-                      if (pm.id === 'MIXED') {
-                        const half = Math.round(finalAmountCDF / 2);
-                        setMixedCashCDF(String(half));
-                        setMixedCashUSD('0');
-                        setMixedElecChannel('ILLICO_CASH');
-                        setMixedElecCDF(String(Math.max(0, finalAmountCDF - half)));
-                      }
-                    }}
-                    className={`py-2 px-1 text-xs font-semibold rounded-lg border text-center transition ${
-                      isDisabled
-                        ? 'opacity-30 cursor-not-allowed bg-slate-800 border-slate-700 text-slate-500'
-                        : isSelected
-                        ? pm.id === 'ILLICO_CASH'
-                          ? 'bg-amber-600 border-amber-400 text-white shadow-sm'
-                          : pm.id === 'MIXED'
-                          ? 'bg-purple-600 border-purple-400 text-white shadow-sm'
-                          : 'bg-blue-600 border-blue-400 text-white shadow-sm'
-                        : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-750'
-                    }`}
-                  >
-                    {pm.label}
-                  </button>
-                );
-              })}
+            <div className="mb-3">
+              <label htmlFor="fast-ticket-payment-method" className="text-[11px] text-slate-400 block mb-1">
+                Choisir le moyen de paiement :
+              </label>
+              <select
+                id="fast-ticket-payment-method"
+                value={paymentMethod}
+                onChange={(e) => {
+                  const nextMethod = e.target.value as PaymentMethod;
+                  setPaymentMethod(nextMethod);
+                  setValidationError('');
+                  if (nextMethod === 'MIXED') {
+                    const half = Math.round(finalAmountCDF / 2);
+                    setMixedCashCDF(String(half));
+                    setMixedCashUSD('0');
+                    setMixedElecChannel('ILLICO_CASH');
+                    setMixedElecCDF(String(Math.max(0, finalAmountCDF - half)));
+                  }
+                }}
+                className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-sm sm:text-xs font-semibold text-white focus:outline-none focus:border-blue-500 cursor-pointer"
+              >
+                <option value="CASH_CDF">Espèces Francs (FC)</option>
+                <option value="CASH_USD">Espèces Dollars (USD $)</option>
+                <option value="MPESA">Mobile Money — M-Pesa (Vodacom)</option>
+                <option value="ORANGE_MONEY">Mobile Money — Orange Money</option>
+                <option value="AIRTEL_MONEY">Mobile Money — Airtel Money</option>
+                <option value="ILLICO_CASH">Illico Cash (Rawbank)</option>
+                <option value="MIXED">Paiement Mixte (Multi-canaux)</option>
+                <option
+                  value="LOYALTY_POINTS"
+                  disabled={!selectedClient || selectedClient.loyaltyPoints < pointsCost}
+                >
+                  Points Fidélité ({pointsCost} pts requis{!selectedClient ? ' — choisir un client' : ''})
+                </option>
+              </select>
             </div>
 
             {paymentMethod === 'ILLICO_CASH' && (

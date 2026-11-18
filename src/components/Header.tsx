@@ -118,11 +118,11 @@ export const Header: React.FC<HeaderProps> = ({
   }, []);
 
   return (
-    <header className="bg-slate-900/95 backdrop-blur-md border-b border-slate-800 sticky top-0 z-40 w-full px-4 sm:px-6 lg:px-8 py-2.5">
-      <div className="w-full flex items-center justify-between gap-4 lg:gap-6">
+    <header className="bg-slate-900/95 backdrop-blur-md border-b border-slate-800 sticky top-0 z-40 w-full px-3 sm:px-6 lg:px-8 2xl:px-10 py-2 sm:py-2.5">
+      <div className="w-full max-w-[2400px] mx-auto flex items-center justify-between gap-2 sm:gap-4 lg:gap-6">
         {/* Zone 2: Navigation Links selon les rôles RBAC (mode horizontal) */}
         {navLayout === 'horizontal' ? (
-          <nav className="flex items-center gap-1 overflow-x-auto no-scrollbar py-1">
+          <nav className="flex-1 min-w-0 flex items-center gap-1 overflow-x-auto no-scrollbar py-1 scroll-smooth">
             <button
               onClick={() => setActiveTab('dashboard')}
               className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
@@ -305,8 +305,8 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
           )}
 
-          {/* Bouton rapide Test & Choix Voix Humaine (Féminine / Mâle) */}
-          <div className="hidden sm:flex items-center bg-slate-800/90 border border-slate-700 rounded-lg overflow-hidden">
+          {/* Bouton rapide Test & Choix Voix Humaine (Féminine / Mâle) - visible sur TOUS les écrans */}
+          <div className="flex items-center bg-slate-800/90 border border-slate-700 rounded-lg overflow-hidden shrink-0">
             <button
               type="button"
               onClick={() => {
@@ -318,7 +318,7 @@ export const Header: React.FC<HeaderProps> = ({
                   ? `Tester l'alerte parlante (${settings.voiceGender === 'MALE' ? 'Voix Masculine' : 'Voix Féminine'})`
                   : 'Alertes sonores/vocales désactivées (cliquer pour test audio)'
               }
-              className={`flex items-center gap-1 px-2 py-1 text-[11px] font-semibold transition cursor-pointer ${
+              className={`flex items-center gap-1 px-2 py-1.5 sm:py-1 text-[11px] font-semibold transition cursor-pointer ${
                 settings.soundAlertsEnabled && (settings.voiceAlertsEnabled ?? true)
                   ? 'text-cyan-300 hover:bg-cyan-500/20'
                   : 'text-slate-400 hover:text-white'
@@ -340,7 +340,7 @@ export const Header: React.FC<HeaderProps> = ({
                 soundService.playTestVoiceAndSound(nextGender);
               }}
               title="Basculer entre Voix Féminine et Voix Masculine (et tester)"
-              className={`px-1.5 py-1 text-[10px] font-mono font-bold border-l border-slate-700 transition cursor-pointer ${
+              className={`px-2 sm:px-1.5 py-1.5 sm:py-1 text-[10px] font-mono font-bold border-l border-slate-700 transition cursor-pointer ${
                 settings.voiceGender === 'MALE'
                   ? 'bg-blue-500/20 text-blue-300 hover:bg-blue-500/30'
                   : 'bg-pink-500/20 text-pink-300 hover:bg-pink-500/30'
@@ -447,6 +447,52 @@ export const Header: React.FC<HeaderProps> = ({
                 </div>
 
                 <div className="p-1.5 space-y-1">
+                  <div className="sm:hidden px-2.5 py-1.5 mb-1 rounded-lg bg-slate-800/70 border border-slate-700/70 flex items-center justify-between text-[11px]">
+                    <span className="text-slate-400">Taux du jour :</span>
+                    <span className="text-emerald-400 font-mono font-bold">1$ = {settings.exchangeRate.toLocaleString()} FC</span>
+                  </div>
+
+                  {isAdmin && (
+                    <div className="md:hidden pb-1.5 mb-1 border-b border-slate-800 space-y-1">
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          setIsProfileMenuOpen(false);
+                          onOpenWhatsAppConfig();
+                        }}
+                        className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs font-medium text-emerald-300 hover:bg-slate-800 transition cursor-pointer text-left"
+                      >
+                        <MessageSquare className="w-4 h-4 shrink-0" />
+                        <span>Configuration WhatsApp</span>
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          setIsProfileMenuOpen(false);
+                          onOpenTierSettings();
+                        }}
+                        className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs font-medium text-amber-300 hover:bg-slate-800 transition cursor-pointer text-left"
+                      >
+                        <Sliders className="w-4 h-4 shrink-0" />
+                        <span>Seuils Statuts Fidèle/VIP</span>
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          setIsProfileMenuOpen(false);
+                          onOpenStaffManagement();
+                        }}
+                        className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs font-medium text-cyan-300 hover:bg-slate-800 transition cursor-pointer text-left"
+                      >
+                        <Shield className="w-4 h-4 shrink-0" />
+                        <span>Gestion Personnel &amp; Accès</span>
+                      </button>
+                    </div>
+                  )}
+
                   <button
                     type="button"
                     role="menuitem"
@@ -533,7 +579,7 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({
   const isGerantOrAdmin = role === 'GERANT' || role === 'ADMIN';
 
   return (
-    <aside className="w-full md:w-56 lg:w-60 shrink-0 bg-slate-900/95 backdrop-blur-md border-b md:border-b-0 md:border-r border-slate-800 px-3 py-3 md:py-4 flex flex-col justify-between gap-3 md:sticky md:top-[69px] md:h-[calc(100vh-69px)] md:overflow-y-auto z-30">
+    <aside className="w-full lg:w-60 xl:w-64 2xl:w-72 shrink-0 bg-slate-900/95 backdrop-blur-md border-b lg:border-b-0 lg:border-r border-slate-800 px-3 py-2.5 lg:py-4 flex flex-col justify-between gap-3 lg:sticky lg:top-[61px] lg:h-[calc(100vh-61px)] lg:overflow-y-auto z-30">
       <div className="space-y-2">
         <div className="flex items-center justify-between px-2 pb-2 border-b border-slate-800/80">
           <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400">
@@ -550,10 +596,10 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({
           </button>
         </div>
 
-        <nav className="flex md:flex-col gap-1 overflow-x-auto md:overflow-x-visible no-scrollbar">
+        <nav className="flex lg:flex-col gap-1 overflow-x-auto lg:overflow-x-visible no-scrollbar">
           <button
             onClick={() => setActiveTab('dashboard')}
-            className={`flex items-center gap-2.5 px-3 py-2 text-xs font-semibold rounded-xl transition-colors whitespace-nowrap shrink-0 md:w-full text-left cursor-pointer ${
+            className={`flex items-center gap-2.5 px-3 py-2 text-xs font-semibold rounded-xl transition-colors whitespace-nowrap shrink-0 lg:w-full text-left cursor-pointer ${
               activeTab === 'dashboard'
                 ? 'bg-blue-600 text-white shadow-sm'
                 : 'text-slate-300 hover:text-white hover:bg-slate-800'
@@ -565,7 +611,7 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({
 
           <button
             onClick={() => setActiveTab('stations')}
-            className={`flex items-center gap-2.5 px-3 py-2 text-xs font-semibold rounded-xl transition-colors whitespace-nowrap shrink-0 md:w-full text-left cursor-pointer ${
+            className={`flex items-center gap-2.5 px-3 py-2 text-xs font-semibold rounded-xl transition-colors whitespace-nowrap shrink-0 lg:w-full text-left cursor-pointer ${
               activeTab === 'stations'
                 ? 'bg-blue-600 text-white shadow-sm'
                 : 'text-slate-300 hover:text-white hover:bg-slate-800'
@@ -577,7 +623,7 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({
 
           <button
             onClick={() => setActiveTab('tickets')}
-            className={`flex items-center gap-2.5 px-3 py-2 text-xs font-semibold rounded-xl transition-colors whitespace-nowrap shrink-0 md:w-full text-left cursor-pointer ${
+            className={`flex items-center gap-2.5 px-3 py-2 text-xs font-semibold rounded-xl transition-colors whitespace-nowrap shrink-0 lg:w-full text-left cursor-pointer ${
               activeTab === 'tickets'
                 ? 'bg-blue-600 text-white shadow-sm'
                 : 'text-slate-300 hover:text-white hover:bg-slate-800'
@@ -589,7 +635,7 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({
 
           <button
             onClick={() => setActiveTab('queue')}
-            className={`flex items-center justify-between gap-2 px-3 py-2 text-xs font-semibold rounded-xl transition-colors whitespace-nowrap shrink-0 md:w-full text-left cursor-pointer ${
+            className={`flex items-center justify-between gap-2 px-3 py-2 text-xs font-semibold rounded-xl transition-colors whitespace-nowrap shrink-0 lg:w-full text-left cursor-pointer ${
               activeTab === 'queue'
                 ? 'bg-blue-600 text-white shadow-sm'
                 : 'text-slate-300 hover:text-white hover:bg-slate-800'
@@ -608,7 +654,7 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({
 
           <button
             onClick={() => setActiveTab('loyalty')}
-            className={`flex items-center gap-2.5 px-3 py-2 text-xs font-semibold rounded-xl transition-colors whitespace-nowrap shrink-0 md:w-full text-left cursor-pointer ${
+            className={`flex items-center gap-2.5 px-3 py-2 text-xs font-semibold rounded-xl transition-colors whitespace-nowrap shrink-0 lg:w-full text-left cursor-pointer ${
               activeTab === 'loyalty'
                 ? 'bg-blue-600 text-white shadow-sm'
                 : 'text-slate-300 hover:text-white hover:bg-slate-800'
@@ -621,7 +667,7 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({
           {isGerantOrAdmin && (
             <button
               onClick={() => setActiveTab('domotique')}
-              className={`flex items-center gap-2.5 px-3 py-2 text-xs font-semibold rounded-xl transition-colors whitespace-nowrap shrink-0 md:w-full text-left cursor-pointer ${
+              className={`flex items-center gap-2.5 px-3 py-2 text-xs font-semibold rounded-xl transition-colors whitespace-nowrap shrink-0 lg:w-full text-left cursor-pointer ${
                 activeTab === 'domotique'
                   ? 'bg-cyan-600 text-white shadow-sm'
                   : 'text-slate-300 hover:text-white hover:bg-slate-800'
@@ -634,7 +680,7 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({
 
           <button
             onClick={() => setActiveTab('cash')}
-            className={`flex items-center gap-2.5 px-3 py-2 text-xs font-semibold rounded-xl transition-colors whitespace-nowrap shrink-0 md:w-full text-left cursor-pointer ${
+            className={`flex items-center gap-2.5 px-3 py-2 text-xs font-semibold rounded-xl transition-colors whitespace-nowrap shrink-0 lg:w-full text-left cursor-pointer ${
               activeTab === 'cash'
                 ? 'bg-blue-600 text-white shadow-sm'
                 : 'text-slate-300 hover:text-white hover:bg-slate-800'
@@ -647,7 +693,7 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({
           {isGerantOrAdmin && (
             <button
               onClick={() => setActiveTab('reports')}
-              className={`flex items-center gap-2.5 px-3 py-2 text-xs font-semibold rounded-xl transition-colors whitespace-nowrap shrink-0 md:w-full text-left cursor-pointer ${
+              className={`flex items-center gap-2.5 px-3 py-2 text-xs font-semibold rounded-xl transition-colors whitespace-nowrap shrink-0 lg:w-full text-left cursor-pointer ${
                 activeTab === 'reports'
                   ? 'bg-blue-600 text-white shadow-sm'
                   : 'text-slate-300 hover:text-white hover:bg-slate-800'
@@ -660,7 +706,7 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({
 
           <button
             onClick={() => setActiveTab('guide')}
-            className={`flex items-center gap-2.5 px-3 py-2 text-xs font-semibold rounded-xl transition-colors whitespace-nowrap shrink-0 md:w-full text-left cursor-pointer ${
+            className={`flex items-center gap-2.5 px-3 py-2 text-xs font-semibold rounded-xl transition-colors whitespace-nowrap shrink-0 lg:w-full text-left cursor-pointer ${
               activeTab === 'guide'
                 ? 'bg-emerald-600 text-white shadow-sm'
                 : 'text-slate-300 hover:text-white hover:bg-slate-800'

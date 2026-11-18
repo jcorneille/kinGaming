@@ -44,7 +44,7 @@ import gozaStarlinkMikrotikSchemaImg from '../assets/images/goza_starlink_mikrot
 import gozaCompleteDevicesImg from '../assets/images/goza_complete_devices_architecture_1794961841172.jpg';
 import gozaFullSystemBatterySchemaImg from '../assets/images/goza_full_system_battery_schema_1794962714394.jpg';
 import gozaWiringPinsSchemaImg from '../assets/images/goza_wiring_pins_connections_1794964188286.jpg';
-import gozaHardwareCatalogCablesImg from '../assets/images/goza_hardware_catalog_cables_1795006338003.jpg';
+import gozaInstallationCompleteV2Img from '../assets/images/goza_installation_complete_v2_1795024312483.jpg';
 
 interface HardwareGuideModalProps {
   settings?: SystemSettings;
@@ -68,7 +68,7 @@ export const HardwareGuideModal: React.FC<HardwareGuideModalProps> = ({
 
   const activeSchemaImg =
     schemaMode === 'hardware_cables'
-      ? gozaHardwareCatalogCablesImg
+      ? gozaInstallationCompleteV2Img
       : schemaMode === 'battery_full'
       ? gozaFullSystemBatterySchemaImg
       : schemaMode === 'wiring_pins'
@@ -79,7 +79,7 @@ export const HardwareGuideModal: React.FC<HardwareGuideModalProps> = ({
 
   const activeSchemaDownloadName =
     schemaMode === 'hardware_cables'
-      ? 'catalogue-materiels-cables-differencies-goza.jpg'
+      ? 'schema-complet-architecture-cablage-goza.jpg'
       : schemaMode === 'battery_full'
       ? 'schema-complet-goza-batterie-20kwh-clim-lumieres.jpg'
       : schemaMode === 'wiring_pins'
@@ -96,7 +96,7 @@ export const HardwareGuideModal: React.FC<HardwareGuideModalProps> = ({
         settings,
         stations,
         devices,
-        schemaImageSrc: gozaFullSystemBatterySchemaImg,
+        schemaImageSrc: gozaInstallationCompleteV2Img,
       });
     } finally {
       setIsGeneratingPdf(false);
@@ -347,10 +347,10 @@ export const HardwareGuideModal: React.FC<HardwareGuideModalProps> = ({
                   <strong>Câblage PC Caissier GOZA :</strong> Reliez le PC Caissier en <strong>Ethernet Gigabit RJ45</strong> sur <code>ether2</code> du MikroTik (latence nulle, jamais en Wi-Fi si possible) et connectez l&apos;<strong>imprimante thermique 80mm</strong> en USB ou LAN.
                 </li>
                 <li>
-                  <strong>Wi-Fi 2.4 GHz pour Shelly :</strong> Les relais <strong>Shelly Plus 1PM</strong> utilisent uniquement le <strong>Wi-Fi 2.4 GHz</strong> (20 MHz, canal fixe 1, 6 ou 11). Créez un SSID dédié (ex. <code>GOZA-IoT</code>) ponté dans le même <em>Bridge LAN</em> (<code>192.168.1.0/24</code> ou <code>192.168.88.0/24</code>) que le PC Caissier, <strong>sans isolation client</strong>.
+                  <strong>Wi-Fi 2.4 GHz Privé (<code>GOZA-IoT</code>) + VLAN Invités (<code>GOZA-WiFi</code>) :</strong> Créez <strong>deux réseaux Wi-Fi séparés</strong> : 1) <code>GOZA-IoT</code> (2.4 GHz, ponté LAN, sans isolation) réservé aux relais Shelly ; 2) <strong><code>GOZA-WiFi</code> (VLAN 50 + Portail Captif MikroTik Hotspot)</strong> pour les smartphones clients, avec profils progressifs <code>shared-users=1..4</code> (<strong>1h : 1 app.</strong> | <strong>3h : 2 app.</strong> | <strong>4h : 3 app.</strong> | <strong>5h+ : 4 app.</strong>).
                 </li>
                 <li>
-                  <strong>Baux DHCP Statiques (IP Fixes) :</strong> Dans MikroTik <code className="text-cyan-300">IP &gt; DHCP Server &gt; Leases &gt; Make Static</code>, figez l&apos;IP du PC GOZA (ex. <code>.100</code>) et de chaque Shelly (<code>.121</code> à <code>.130</code> correspondant à <code>120 + N° Poste</code>).
+                  <strong>Baux DHCP Statiques &amp; REST API Hotspot :</strong> Dans MikroTik <code className="text-cyan-300">IP &gt; DHCP Server &gt; Leases &gt; Make Static</code>, figez l&apos;IP du PC GOZA (<code>.100</code>) et de chaque Shelly (<code>.121–.144</code>), puis activez l&apos;API RouterOS (REST/HTTPS ou WinBox) afin que GOZA crée et expire les codes Wi-Fi <code>GZ-XXXXXX</code> en direct.
                 </li>
               </ul>
             </div>
@@ -412,10 +412,10 @@ export const HardwareGuideModal: React.FC<HardwareGuideModalProps> = ({
             <div className="bg-purple-950/25 border border-purple-500/30 rounded-xl p-4 space-y-2">
               <h4 className="font-bold text-purple-300 text-sm flex items-center gap-2">
                 <Globe className="w-4 h-4 text-purple-400" />
-                <span>Gestion en Local ET à Distance (Starlink + MikroTik)</span>
+                <span>Gestion Locale/Distance + Portail Captif Wi-Fi &amp; Réservations 3h+</span>
               </h4>
               <p className="text-slate-300 leading-relaxed">
-                <strong>En Local (même sans Internet) :</strong> Le PC Caisse (<code>.100</code>) parle aux Shelly (<code>.121–.144</code>), à l&apos;imprimante 80mm et aux consoles via le MikroTik. <strong>À Distance :</strong> Le Gérant/Admin consulte les recettes, l&apos;état des postes et commande les clims/relais via l&apos;app Cloud GOZA ou un <strong>tunnel VPN WireGuard</strong> intégré dans le MikroTik.
+                <strong>Local + Distance :</strong> PC (<code>.100</code>) ↔ Shelly en local sans Internet ; accès gérant à distance via Cloud GOZA / VPN WireGuard. <strong>Wi-Fi Captif Multi-Appareils :</strong> Le serveur <strong>Hotspot intégré à MikroTik</strong> génère un code unique <code>GZ-XXXXXX</code> dès <strong>&ge; 1h</strong> (<strong>1h–2h : 1 app.</strong> · <strong>3h : 2 app.</strong> · <strong>4h : 3 app.</strong> · <strong>5h+ : 4 app.</strong>, actif dès l&apos;impression en file jusqu&apos;à la fin). <strong>Matériel conseillé :</strong> <strong>1× Borne AP PoE Haute Densité + Injecteur 48V</strong> sur <code>ether4</code>, <strong>1× Lecteur QR 2D USB</strong> en caisse et <strong>Baie Réseau 6U + Mini-UPS &lt;10ms</strong>.
               </p>
             </div>
           </div>
@@ -424,24 +424,24 @@ export const HardwareGuideModal: React.FC<HardwareGuideModalProps> = ({
           <div className="bg-emerald-950/25 border border-emerald-500/30 rounded-xl p-4 space-y-2 text-xs">
             <h4 className="font-bold text-emerald-300 text-sm flex items-center gap-2">
               <ShieldCheck className="w-4 h-4 text-emerald-400" />
-              <span>Flux Opérationnel Complet (De l&apos;Encaissement à l&apos;Extinction)</span>
+              <span>Flux Opérationnel Complet (Espace Client 3h+ / Guichet → Retard Auto-Déduit → Wi-Fi Multi-Appareils)</span>
             </h4>
             <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 pt-1">
               <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-3">
-                <div className="text-[11px] font-bold text-cyan-300 mb-1">A. Ticket Caisse (&lt;15s)</div>
-                <p className="text-slate-300 leading-relaxed">Le caissier encaisse le joueur sur le PC GOZA (Cash CDF/USD ou Mobile Money).</p>
+                <div className="text-[11px] font-bold text-cyan-300 mb-1">A. Caisse Directe ou Espace Client 3h+</div>
+                <p className="text-slate-300 leading-relaxed">Pas de réservation sur place à l&apos;accueil : les réservations se font <strong>uniquement dans l&apos;Espace Client</strong> via Mobile Money + OTP (<strong>&ge; 3h + 15%</strong>), annulables au plus tard <strong>1h avant</strong> l&apos;heure réservée.</p>
               </div>
               <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-3">
-                <div className="text-[11px] font-bold text-emerald-300 mb-1">B. Ordre MikroTik → Shelly</div>
-                <p className="text-slate-300 leading-relaxed">Le serveur GOZA envoie le signal local via MikroTik : le relais Shelly du poste passe instantanément à ON.</p>
+                <div className="text-[11px] font-bold text-emerald-300 mb-1">B. Validation &amp; Retard Auto-Déduit</div>
+                <p className="text-slate-300 leading-relaxed">Au guichet, le caissier scanne <code>RES-XXXX</code> (Lecteur QR 2D USB). Tout retard après l&apos;heure prévue est <strong>déduit automatiquement</strong> du temps jouable ; le client est placé sur poste libre ou file prépayée.</p>
               </div>
               <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-3">
-                <div className="text-[11px] font-bold text-amber-300 mb-1">C. Ticket 80mm &amp; WhatsApp</div>
-                <p className="text-slate-300 leading-relaxed">L&apos;imprimante thermique sort le reçu QR et Starlink transmet la confirmation WhatsApp au joueur.</p>
+                <div className="text-[11px] font-bold text-amber-300 mb-1">C. Ticket 80mm &amp; Wi-Fi (&ge; 1h)</div>
+                <p className="text-slate-300 leading-relaxed">Dès l&apos;impression (même en file), tout ticket payé <strong>&ge; 1h</strong> active son code <code>GZ-XXXXXX</code> : <strong>1h=1 app.</strong>, <strong>3h=2 app.</strong>, <strong>4h=3 app.</strong>, <strong>5h+=4 app.</strong></p>
               </div>
               <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-3">
-                <div className="text-[11px] font-bold text-rose-300 mb-1">D. Fin de Session Auto</div>
-                <p className="text-slate-300 leading-relaxed">À 00:00 (+ délai de grâce), alerte vocale puis coupure auto du relais Shelly (sauf les 2 postes exemptés).</p>
+                <div className="text-[11px] font-bold text-rose-300 mb-1">D. Fin Session &amp; Expiration Wi-Fi</div>
+                <p className="text-slate-300 leading-relaxed">À la fin du temps jouable restant, le poste coupe (sauf 2 exemptés) et le code Wi-Fi expire automatiquement sur le Hotspot MikroTik.</p>
               </div>
             </div>
           </div>
@@ -637,8 +637,28 @@ export const HardwareGuideModal: React.FC<HardwareGuideModalProps> = ({
                 </tr>
                 <tr>
                   <td className="py-3 px-3 font-semibold text-blue-300">13. Switch Gigabit 16 Ports RJ45</td>
-                  <td className="py-3 px-3 font-mono text-slate-300">Port ether3 MikroTik → Câbles RJ45 Cat6 vers 8 PS4 + 2 PS5</td>
-                  <td className="py-3 px-3 text-slate-300"><strong className="text-blue-300">RÉSEAU FILAIRE CONSOLES :</strong> Distribue Internet/LAN en gigabit aux 10 consoles sans saturer le Wi-Fi 2.4 GHz utilisé par les relais Shelly et la caisse.</td>
+                  <td className="py-3 px-3 font-mono text-slate-300">Port ether3 MikroTik → Câbles RJ45 Cat6 vers Consoles (PS4/PS5/Xbox)</td>
+                  <td className="py-3 px-3 text-slate-300"><strong className="text-blue-300">RÉSEAU FILAIRE CONSOLES :</strong> Distribue Internet/LAN en gigabit aux consoles sans saturer le Wi-Fi 2.4 GHz utilisé par les relais Shelly.</td>
+                </tr>
+                <tr>
+                  <td className="py-3 px-3 font-semibold text-purple-300">14. Portail Captif MikroTik + Borne Wi-Fi AP PoE Haute Densité + Injecteur 48V</td>
+                  <td className="py-3 px-3 font-mono text-slate-300">ether4 (VLAN 50 · GOZA-WiFi) · REST API /rest/ip/hotspot</td>
+                  <td className="py-3 px-3 text-slate-300"><strong className="text-purple-300">WI-FI MULTI-APPAREILS :</strong> Supporte de nombreux smartphones simultanément. Attribue automatiquement : <strong>1h–2h : 1 app.</strong>, <strong>3h : 2 app.</strong>, <strong>4h : 3 app.</strong>, <strong>5h+ : 4 app.</strong> dès l&apos;impression du ticket jusqu&apos;à la fin du jeu.</td>
+                </tr>
+                <tr>
+                  <td className="py-3 px-3 font-semibold text-amber-300">15. Lecteur QR / Code-Barres 2D USB (Accueil &amp; Validation)</td>
+                  <td className="py-3 px-3 font-mono text-slate-300">USB sur PC Caissier GOZA (.100) — Mode clavier HID</td>
+                  <td className="py-3 px-3 text-slate-300"><strong className="text-amber-300">CHECK-IN INSTANTANÉ :</strong> Scanne en 1 seconde le code <code>RES-XXXX</code> ou le QR d&apos;un ticket 80mm pour valider la réservation (avec calcul automatique du retard) sans erreur de saisie.</td>
+                </tr>
+                <tr>
+                  <td className="py-3 px-3 font-semibold text-emerald-300">16. Baie Réseau 6U Ventilée + Bandeau PDU + Mini-UPS &lt;10ms</td>
+                  <td className="py-3 px-3 font-mono text-slate-300">Coffret mural sécurisé (Starlink, MikroTik, Switch 16p, PoE)</td>
+                  <td className="py-3 px-3 text-slate-300"><strong className="text-emerald-300">FIABILITÉ 24/7 :</strong> Protège le cœur réseau contre la poussière, les débranchements accidentels et les microcoupures (&lt;10ms) lors des bascules SNEL ↔ Onduleur.</td>
+                </tr>
+                <tr>
+                  <td className="py-3 px-3 font-semibold text-rose-300">17. Parafoudre Type 2 + Régulateur/Stabilisateur AVR (Clims)</td>
+                  <td className="py-3 px-3 font-mono text-slate-300">En amont des Disjoncteurs 25A Clim 1 (.141) &amp; Clim 2 (.142)</td>
+                  <td className="py-3 px-3 text-slate-300"><strong className="text-rose-300">ANTI-SURTENSION CLIMS :</strong> Protège les compresseurs des 2 climatiseurs (délestés hors batterie) contre les chutes et pointes de tension du réseau SNEL.</td>
                 </tr>
               </tbody>
             </table>
@@ -806,9 +826,9 @@ export const HardwareGuideModal: React.FC<HardwareGuideModalProps> = ({
               </div>
 
               <div className="bg-slate-950/70 border border-slate-800 rounded-xl p-4 space-y-1.5">
-                <div className="font-bold text-amber-300 flex items-center gap-2"><Users className="w-4 h-4" /> 4. File d&apos;attente</div>
+                <div className="font-bold text-amber-300 flex items-center gap-2"><Users className="w-4 h-4" /> 4. File d&apos;attente &amp; File des Réservés</div>
                 <p className="text-slate-300 leading-relaxed">
-                  Inscription rapide des joueurs en attente (console PS4/PS5 ou indifférent, durée souhaitée, priorité <em>Normale</em> ou <em>VIP</em>), estimation automatique du temps d&apos;attente, bouton <strong>Appeler</strong> (voix + WhatsApp), <strong>Assigner à un poste libre</strong> ou marquer <em>Absent / Annulé</em>.
+                  <strong>File des Réservés (<code>RES-XXXX</code>) :</strong> Réservations créées exclusivement via l&apos;Espace Client en Mobile Money + OTP (<strong>&ge; 3h + 15%</strong>, annulables par le client au moins <strong>1h avant</strong> l&apos;heure prévue — aucune réservation sur place). À l&apos;accueil, les minutes de retard éventuelles sont <strong>déduites automatiquement</strong> du temps jouable ; imprimez le ticket + code Wi-Fi multi-appareils puis placez en file prépayée ou sur poste libre.
                 </p>
               </div>
 
@@ -861,14 +881,13 @@ export const HardwareGuideModal: React.FC<HardwareGuideModalProps> = ({
             <div className="bg-slate-950/70 border border-emerald-500/25 rounded-xl p-4 space-y-2">
               <h4 className="font-bold text-emerald-300 text-sm flex items-center gap-2">
                 <Smartphone className="w-4 h-4" />
-                <span>D. Portail Client QR &amp; Rôles d&apos;Accès (RBAC)</span>
+                <span>D. Portail Client (Réservations 3h+ &amp; Wi-Fi) &amp; Rôles (RBAC)</span>
               </h4>
               <ul className="space-y-1.5 text-slate-300 list-disc pl-5 leading-relaxed">
-                <li><strong>Portail Joueur (<code>/?tab=client</code>) :</strong> Connexion par téléphone + PIN, photo ronde multi-formats, solde points, progression Fidèle/VIP, code parrain 5 caractères et conversion points.</li>
-                <li><strong>Vérification Ticket QR (<code>/t/:token</code>) :</strong> Page publique scannée sur le ticket papier 80mm montrant le temps restant en direct.</li>
-                <li><strong>Rôle Caissier :</strong> Accès Tableau de bord, Postes Live, Billetterie, File d&apos;attente, Fidélité, Caisse &amp; Snacks, Guide.</li>
-                <li><strong>Rôle Gérant :</strong> + Domotique IoT et Rapports financiers.</li>
-                <li><strong>Rôle Admin :</strong> Accès total + 12 rubriques Paramètres, Gestion Personnel, WhatsApp &amp; Règles Fidélité.</li>
+                <li><strong>Portail Joueur (<code>/?tab=client</code>) :</strong> Réservation 100% mobile en <strong>Mobile Money + validation OTP (&ge; 3h min, +15% frais)</strong> avec choix de l&apos;heure d&apos;arrivée, code <code>RES-XXXX</code> et <strong>annulation autorisée jusqu&apos;à 1h avant</strong> (pas de paiement sur place). Affiche le <strong>code Wi-Fi multi-appareils</strong> (1h=1, 3h=2, 4h=3, 5h+=4 app.), points &amp; parrainage.</li>
+                <li><strong>Vérification Ticket QR (<code>/t/:token</code>) :</strong> Page publique scannée sur le ticket 80mm montrant le temps jouable restant (retard éventuel indiqué) et le code Wi-Fi actif/expiré.</li>
+                <li><strong>Rôle Caissier :</strong> Accès Tableau de bord, Postes Live, Billetterie, File d&apos;attente/Réservés, Fidélité, Caisse &amp; Snacks, Guide.</li>
+                <li><strong>Rôle Gérant / Admin :</strong> + Domotique IoT (avec seuils °C Clim), Rapports, 12 rubriques Paramètres &amp; Gestion Personnel.</li>
               </ul>
             </div>
           </div>
@@ -884,7 +903,7 @@ export const HardwareGuideModal: React.FC<HardwareGuideModalProps> = ({
               <span>Nomenclature du Matériel Domotique & Budget Estimatif</span>
             </h3>
             <p className="text-xs text-slate-400 mt-1">
-              Composants standard ouverts pour Kinshasa (~470 USD / 1 316 000 FC).
+              Matériel complet recommandé pour Kinshasa (~920 USD / 2 576 000 FC hors parc Batterie 15–20 kWh + Onduleur 8 kW).
             </p>
           </div>
 
@@ -950,12 +969,44 @@ export const HardwareGuideModal: React.FC<HardwareGuideModalProps> = ({
                   <td className="py-2.5 px-3 text-right text-slate-400">0 FC</td>
                 </tr>
                 <tr>
-                  <td className="py-2.5 px-3 font-sans font-medium text-white">Routeur Réseau Principal &amp; Wi-Fi IoT</td>
-                  <td className="py-2.5 px-3 text-cyan-400">MikroTik hAP ax² / hEX + WireGuard VPN</td>
+                  <td className="py-2.5 px-3 font-sans font-medium text-white">Routeur Réseau Principal &amp; Portail Captif Hotspot</td>
+                  <td className="py-2.5 px-3 text-cyan-400">MikroTik hAP ax² / hEX (Hotspot + WireGuard inclus)</td>
                   <td className="py-2.5 px-3 text-center">1</td>
                   <td className="py-2.5 px-3 text-right">$110.00</td>
                   <td className="py-2.5 px-3 text-right font-bold text-emerald-400">$110.00</td>
                   <td className="py-2.5 px-3 text-right text-slate-400">308 000 FC</td>
+                </tr>
+                <tr>
+                  <td className="py-2.5 px-3 font-sans font-medium text-white">Borne Wi-Fi AP PoE Haute Densité + Injecteur 48V</td>
+                  <td className="py-2.5 px-3 text-purple-400">MikroTik cAP ax / UniFi U6+ (Multi-appareils 1–4 app.)</td>
+                  <td className="py-2.5 px-3 text-center">1 (Recommandé)</td>
+                  <td className="py-2.5 px-3 text-right">$110.00</td>
+                  <td className="py-2.5 px-3 text-right font-bold text-emerald-400">$110.00</td>
+                  <td className="py-2.5 px-3 text-right text-slate-400">308 000 FC</td>
+                </tr>
+                <tr>
+                  <td className="py-2.5 px-3 font-sans font-medium text-white">Lecteur QR / Code-Barres 2D USB (Check-in Réservations)</td>
+                  <td className="py-2.5 px-3 text-amber-300">Scanner 2D Filaire USB Plug &amp; Play (RES-XXXX / QR)</td>
+                  <td className="py-2.5 px-3 text-center">1</td>
+                  <td className="py-2.5 px-3 text-right">$35.00</td>
+                  <td className="py-2.5 px-3 text-right font-bold text-emerald-400">$35.00</td>
+                  <td className="py-2.5 px-3 text-right text-slate-400">98 000 FC</td>
+                </tr>
+                <tr>
+                  <td className="py-2.5 px-3 font-sans font-medium text-white">Baie Réseau Murale 6U Ventilée + PDU + Mini-UPS &lt;10ms</td>
+                  <td className="py-2.5 px-3 text-emerald-300">Coffret 6U + Bandeau PDU + Mini-UPS Caisse/Routeur</td>
+                  <td className="py-2.5 px-3 text-center">1 pack</td>
+                  <td className="py-2.5 px-3 text-right">$95.00</td>
+                  <td className="py-2.5 px-3 text-right font-bold text-emerald-400">$95.00</td>
+                  <td className="py-2.5 px-3 text-right text-slate-400">266 000 FC</td>
+                </tr>
+                <tr>
+                  <td className="py-2.5 px-3 font-sans font-medium text-white">Parafoudre Type 2 + Régulateur/Stabilisateur AVR (Clims)</td>
+                  <td className="py-2.5 px-3 text-rose-300">Protection surtension SNEL pour 2 Climatiseurs Split</td>
+                  <td className="py-2.5 px-3 text-center">1 pack</td>
+                  <td className="py-2.5 px-3 text-right">$90.00</td>
+                  <td className="py-2.5 px-3 text-right font-bold text-emerald-400">$90.00</td>
+                  <td className="py-2.5 px-3 text-right text-slate-400">252 000 FC</td>
                 </tr>
                 <tr>
                   <td className="py-2.5 px-3 font-sans font-medium text-white">Onduleur Hybride 8 kW + Batterie Lithium 15–20 kWh (48V)</td>
@@ -1066,14 +1117,14 @@ TelePeriod 10
         <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4 max-w-none w-full text-xs">
           <h3 className="text-base font-bold text-white flex items-center gap-2">
             <FileText className="w-5 h-5 text-blue-400" />
-            <span>Manuel Opérationnel du Caissier (GOZA)</span>
+            <span>Manuel Opérationnel du Caissier &amp; Accueil (GOZA)</span>
           </h3>
-          <p className="text-slate-300">
-            1. Prise de poste avec son code PIN personnel (4 chiffres).<br />
-            2. Sélection du poste libre vert sur la grille.<br />
-            3. Encaissement express (&lt;15s) et allumage automatique de la prise.<br />
-            4. Remise du ticket thermique 80mm au joueur.
-          </p>
+          <div className="space-y-2 text-slate-300 leading-relaxed">
+            <p>1. Prise de poste avec votre code PIN personnel (4 chiffres).</p>
+            <p>2. <strong>Client direct sans réservation :</strong> Sélectionnez un poste libre vert → Encaissement express via le menu déroulant de paiement (&lt;15s) → Allumage Shelly auto + Impression ticket 80mm. <em>Note : aucune réservation sur place n&apos;est effectuée à l&apos;accueil.</em></p>
+            <p>3. <strong>Client avec Réservation Mobile Money OTP (<code>RES-XXXX</code>) :</strong> Dans <em>File d&apos;attente &gt; File des Réservés</em>, scannez (Lecteur QR 2D) ou saisissez <code>RES-XXXX</code>. Les minutes de retard éventuelles par rapport à l&apos;heure réservée sont <strong>déduites automatiquement</strong> par le système, puis cliquez sur <strong>Valider &amp; Poste</strong> (si libre) ou <strong>Valider, Ticket &amp; File d&apos;attente</strong> (si complet).</p>
+            <p>4. <strong>Code Wi-Fi Multi-Appareils (&ge; 1h) :</strong> Pour tout ticket payé &ge; 1h (direct, file ou réservation), remettez le code <code>GZ-XXXXXX</code> actif de l&apos;impression à la fin du jeu : <strong>1h–2h : 1 app.</strong> · <strong>3h : 2 app.</strong> · <strong>4h : 3 app.</strong> · <strong>5h+ : 4 app.</strong></p>
+          </div>
         </div>
       )}
 

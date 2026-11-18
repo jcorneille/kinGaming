@@ -317,9 +317,9 @@ export const LoginLandingView: React.FC<LoginLandingViewProps> = ({
       : gozaLoginArenaImg;
 
   return (
-    <div className="relative min-h-screen w-full bg-gradient-to-br from-[#050811] via-[#0b1326] to-[#050811] text-slate-100 font-sans overflow-x-hidden flex flex-col justify-between selection:bg-amber-500 selection:text-slate-950">
-      {/* ================= 1. FOND DESKTOP PLEIN ÉCRAN PHOTORÉALISTE GAMING ================= */}
-      <div className="hidden md:block fixed inset-0 pointer-events-none z-0 overflow-hidden bg-[#050811]">
+    <div className="relative min-h-screen min-h-[100dvh] w-full bg-gradient-to-br from-[#050811] via-[#0b1326] to-[#050811] text-slate-100 font-sans overflow-x-hidden flex flex-col justify-between selection:bg-amber-500 selection:text-slate-950">
+      {/* ================= 1. FOND DESKTOP / TV PLEIN ÉCRAN PHOTORÉALISTE GAMING ================= */}
+      <div className="hidden lg:block fixed inset-0 pointer-events-none z-0 overflow-hidden bg-[#050811]">
         <img
           src={resolvedLoginBg}
           alt="Intérieur réaliste de la salle de jeux GOZA équipée de consoles PS4 et PS5"
@@ -333,19 +333,19 @@ export const LoginLandingView: React.FC<LoginLandingViewProps> = ({
       </div>
 
       {/* ================= 2. EN-TÊTE PLEINE LARGEUR ================= */}
-      <header className="relative z-10 w-full px-4 sm:px-8 lg:px-14 py-4 flex items-center justify-between">
-        <div className="md:hidden">
+      <header className="relative z-10 w-full max-w-[2200px] mx-auto px-4 sm:px-8 lg:px-14 py-3 sm:py-4 flex items-center justify-between">
+        <div className="lg:hidden">
           <GozaWordmark name="GOZA" size="sm" />
         </div>
-        <div className="hidden md:inline-flex items-center gap-2.5 px-3.5 py-1.5 rounded-lg bg-slate-950/75 backdrop-blur-md border border-white/10 text-[11px] font-mono text-slate-200 shadow-md">
+        <div className="hidden lg:inline-flex items-center gap-2.5 px-3.5 py-1.5 rounded-lg bg-slate-950/75 backdrop-blur-md border border-white/10 text-[11px] font-mono text-slate-200 shadow-md">
           <span className="w-2 h-2 rounded-full bg-emerald-400" />
           <span>Salle Ouverte · Kinshasa Gombe</span>
         </div>
       </header>
 
-      {/* ================= 3. SUR TÉLÉPHONE : ARÈNE GAMING RÉALISTE + TITRE GOZA ================= */}
-      <div className="md:hidden relative w-full pt-1 px-4 z-10 flex flex-col items-center">
-        <div className="relative w-full aspect-video rounded-2xl overflow-hidden border border-white/15 shadow-2xl shadow-black/80 bg-gradient-to-br from-slate-900 to-slate-950">
+      {/* ================= 3. SUR TÉLÉPHONE & TABLETTE : ARÈNE GAMING RÉALISTE + TITRE GOZA ================= */}
+      <div className="lg:hidden relative w-full max-w-2xl mx-auto pt-1 px-4 sm:px-8 z-10 flex flex-col items-center">
+        <div className="relative w-full aspect-video sm:aspect-[21/9] rounded-2xl overflow-hidden border border-white/15 shadow-2xl shadow-black/80 bg-gradient-to-br from-slate-900 to-slate-950">
           <img
             src={resolvedLoginBg}
             alt="Salle de jeux GOZA Kinshasa"
@@ -363,9 +363,9 @@ export const LoginLandingView: React.FC<LoginLandingViewProps> = ({
       </div>
 
       {/* ================= 4. ZONE PRINCIPALE PLEIN ÉCRAN : HERO GAMING À GAUCHE + CARTE CONNEXION À DROITE ================= */}
-      <main className="relative z-10 flex-1 w-full flex flex-col md:flex-row items-center justify-between gap-8 lg:gap-14 px-4 sm:px-8 lg:px-14 xl:px-20 py-4 md:py-10">
-        {/* Identité Gaming GOZA sur Desktop */}
-        <section className="hidden md:flex flex-1 flex-col justify-center max-w-2xl space-y-5">
+      <main className="relative z-10 flex-1 w-full max-w-[2200px] mx-auto flex flex-col lg:flex-row items-center justify-center lg:justify-between gap-6 lg:gap-14 px-4 sm:px-8 lg:px-14 xl:px-20 2xl:px-28 py-4 lg:py-10">
+        {/* Identité Gaming GOZA sur Desktop / Moniteur / TV */}
+        <section className="hidden lg:flex flex-1 flex-col justify-center max-w-2xl 2xl:max-w-3xl space-y-5">
           <div className="inline-flex flex-col space-y-3 w-fit max-w-full">
             <GozaPs5HeroShowcase venueName="GOZA" />
             <div className="relative h-1.5 w-full rounded-full overflow-hidden bg-gradient-to-r from-cyan-400 via-blue-500 to-amber-400 animate-goza-shimmer shadow-[0_0_16px_rgba(34,211,238,0.45)]">
@@ -373,7 +373,7 @@ export const LoginLandingView: React.FC<LoginLandingViewProps> = ({
             </div>
           </div>
 
-          <h1 className="text-xl lg:text-2xl font-bold text-white tracking-tight leading-snug">
+          <h1 className="text-xl lg:text-2xl 2xl:text-3xl font-bold text-white tracking-tight leading-snug">
             Arène PlayStation Next-Gen &amp; Espace Compétition
           </h1>
 
@@ -400,7 +400,7 @@ export const LoginLandingView: React.FC<LoginLandingViewProps> = ({
         </section>
 
         {/* ================= CARTE DE CONNEXION RÉELLE (GLASSMORPHISME LISIBLE) ================= */}
-        <div className="w-full max-w-md bg-[#090f1d]/75 backdrop-blur-xl border border-white/20 rounded-3xl p-6 sm:p-7 shadow-2xl shadow-black/80 space-y-5 mt-4 md:mt-0 ring-1 ring-white/10">
+        <div className="w-full max-w-md 2xl:max-w-lg bg-[#090f1d]/80 backdrop-blur-xl border border-white/20 rounded-3xl p-4 sm:p-6 lg:p-7 shadow-2xl shadow-black/80 space-y-4 sm:space-y-5 mt-2 lg:mt-0 ring-1 ring-white/10">
           
           {/* ================= SÉLECTEUR D'ESPACE (DORÉ / BLEU) ================= */}
           <div className="grid grid-cols-2 gap-1.5 p-1.5 bg-black/40 backdrop-blur-sm rounded-2xl border border-white/15 text-xs font-bold">

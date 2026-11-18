@@ -700,8 +700,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </div>
           ) : (
             <div className="space-y-3">
-              {/* Zone d'inspection au survol */}
-              <div className="h-8 flex items-center justify-between px-3 rounded-lg bg-slate-950/70 border border-slate-800/80 text-xs font-mono tabular-nums">
+              {/* Zone d'inspection au survol ou au clic (tactile) */}
+              <div className="min-h-8 flex flex-wrap items-center justify-between gap-2 px-3 py-1.5 rounded-lg bg-slate-950/70 border border-slate-800/80 text-xs font-mono tabular-nums">
                 {hoveredBarIdx !== null && chartSeries[hoveredBarIdx] ? (
                   <>
                     <span className="text-white font-bold">
@@ -720,7 +720,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 ) : (
                   <>
                     <span className="text-slate-400 font-sans">
-                      Survolez une barre pour voir le détail exact
+                      Survolez ou touchez une barre pour voir le détail exact
                     </span>
                     <span className="text-emerald-400 font-bold">
                       Cumul : {kpis.totalCDF.toLocaleString('fr-FR')} FC
@@ -730,7 +730,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               </div>
 
               {/* Graphique en barres empilées propre sans dépendance externe */}
-              <div className="h-56 flex items-end gap-1.5 sm:gap-2 pt-4 pb-1 px-1 border-b border-slate-800">
+              <div className="h-56 flex items-end gap-1 sm:gap-2 pt-4 pb-1 px-1 border-b border-slate-800">
                 {chartSeries.map((bucket, idx) => {
                   const total = bucket.gamingCDF + bucket.snacksCDF;
                   const totalHeightPct = Math.max(
@@ -747,6 +747,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       key={bucket.key}
                       onMouseEnter={() => setHoveredBarIdx(idx)}
                       onMouseLeave={() => setHoveredBarIdx(null)}
+                      onClick={() => setHoveredBarIdx((prev) => (prev === idx ? null : idx))}
                       className="flex-1 h-full flex flex-col justify-end items-center group cursor-pointer"
                     >
                       <div

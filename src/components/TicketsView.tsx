@@ -74,6 +74,8 @@ export const TicketsView: React.FC<TicketsViewProps> = ({
     switch (status) {
       case 'active':
         return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-500/20 text-blue-400 border border-blue-500/30">En cours</span>;
+      case 'queued':
+        return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">File d&apos;attente</span>;
       case 'completed':
         return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">Terminé</span>;
       case 'extended':
@@ -166,11 +168,23 @@ export const TicketsView: React.FC<TicketsViewProps> = ({
                 paginatedTickets.map((t) => (
                   <tr key={t.id} className="hover:bg-slate-800/40 transition">
                     <td className="py-3 px-4 font-bold text-white whitespace-nowrap">
-                      {t.ticketNumber}
+                      <div>{t.ticketNumber}</div>
+                      {t.wifiVoucher && (
+                        <div className="text-[10px] text-cyan-300 font-mono">
+                          Wi-Fi: {t.wifiVoucher.code} ({t.wifiVoucher.status === 'ACTIVE' ? `${t.wifiVoucher.maxDevices} app.` : 'Expiré'})
+                        </div>
+                      )}
+                      {t.reservationCode && (
+                        <div className="text-[10px] text-purple-300 font-mono">
+                          Rés.: {t.reservationCode}
+                        </div>
+                      )}
                     </td>
                     <td className="py-3 px-4 whitespace-nowrap">
-                      <span className="font-sans font-bold text-slate-200">{t.stationName || `Poste ${t.stationId}`}</span>
-                      <span className={`ml-1.5 text-[10px] px-1 py-0.2 rounded font-bold ${t.stationType === 'PS5' ? 'bg-cyan-500/20 text-cyan-300' : 'bg-slate-800 text-slate-400'}`}>
+                      <span className="font-sans font-bold text-slate-200">
+                        {t.status === 'queued' || t.stationId === 0 ? "File d'attente" : t.stationName || `Poste ${t.stationId}`}
+                      </span>
+                      <span className={`ml-1.5 text-[10px] px-1 py-0.2 rounded font-bold ${t.stationType.includes('PS5') ? 'bg-cyan-500/20 text-cyan-300' : 'bg-slate-800 text-slate-400'}`}>
                         {t.stationType}
                       </span>
                       {t.transferredFromStationId && (
@@ -184,7 +198,10 @@ export const TicketsView: React.FC<TicketsViewProps> = ({
                       {t.clientPhone && <div className="text-[10px] text-slate-400">{t.clientPhone}</div>}
                     </td>
                     <td className="py-3 px-4 text-slate-300">
-                      {t.durationMinutes} min
+                      <div>{t.durationMinutes} min</div>
+                      {t.lostLateMinutes && t.lostLateMinutes > 0 && (
+                        <div className="text-[10px] text-amber-300">-{t.lostLateMinutes}m retard</div>
+                      )}
                     </td>
                     <td className="py-3 px-4 text-[11px] text-slate-400 whitespace-nowrap">
                       {formatDateTime(t.startTime)}

@@ -164,9 +164,17 @@ Statut: Actif / Validé`;
               <div className="flex justify-between">
                 <span className="font-bold">POSTE ATTRIBUÉ :</span>
                 <span className="font-bold text-xs">
-                  {ticket.stationName || `POSTE ${ticket.stationId}`} ({ticket.stationType})
+                  {ticket.status === 'queued' || ticket.stationId === 0
+                    ? `FILE D'ATTENTE (${ticket.stationType})`
+                    : `${ticket.stationName || `POSTE ${ticket.stationId}`} (${ticket.stationType})`}
                 </span>
               </div>
+              {ticket.reservationCode && (
+                <div className="flex justify-between text-[9px] bg-neutral-100 px-1.5 py-0.5 rounded border border-neutral-300">
+                  <span className="font-bold">RÉSERVATION :</span>
+                  <span className="font-bold">{ticket.reservationCode} (Prépayé +15%)</span>
+                </div>
+              )}
               {ticket.transferredFromStationId && (
                 <div className="flex justify-between text-[9px] bg-neutral-100 px-1.5 py-0.5 rounded border border-neutral-300">
                   <span className="font-bold">TRANSFERT :</span>
@@ -177,8 +185,20 @@ Statut: Actif / Validé`;
                 <span>Joueur :</span>
                 <span className="font-semibold">{ticket.clientName}</span>
               </div>
+              {ticket.lostLateMinutes && ticket.lostLateMinutes > 0 && (
+                <>
+                  <div className="flex justify-between text-[10px]">
+                    <span>Durée réservée :</span>
+                    <span>{ticket.originalDurationMinutes || ticket.durationMinutes + ticket.lostLateMinutes} Minutes</span>
+                  </div>
+                  <div className="flex justify-between text-[10px] font-bold">
+                    <span>Retard déduit :</span>
+                    <span>-{ticket.lostLateMinutes} Minutes</span>
+                  </div>
+                </>
+              )}
               <div className="flex justify-between">
-                <span>Durée achetée :</span>
+                <span>Durée jouable :</span>
                 <span className="font-bold">{ticket.durationMinutes} Minutes</span>
               </div>
               <div className="flex justify-between text-[10px]">
@@ -279,6 +299,27 @@ Statut: Actif / Validé`;
                 </div>
               )}
             </div>
+
+            {ticket.wifiVoucher && (ticket.durationMinutes >= 60 || (ticket.originalDurationMinutes || 0) >= 60) && (
+              <div className="my-2 p-2 border-2 border-dashed border-black rounded bg-neutral-100 text-center space-y-0.5">
+                <div className="text-[9px] font-extrabold uppercase tracking-wider">
+                  WI-FI CLIENT OFFERT (TICKET &ge; 1H)
+                </div>
+                <div className="text-[9px]">
+                  Réseau : <span className="font-bold">{ticket.wifiVoucher.ssid}</span>
+                </div>
+                <div className="text-sm font-black tracking-widest py-0.5 border-y border-neutral-400">
+                  {ticket.wifiVoucher.code}
+                </div>
+                <div className="text-[8px] font-bold uppercase">
+                  {ticket.wifiVoucher.maxDevices}{' '}
+                  {ticket.wifiVoucher.maxDevices > 1 ? 'APPAREILS MAX SIMULTANÉS' : 'SEUL APPAREIL UNIQUEMENT'}
+                </div>
+                <div className="text-[8px] text-neutral-700">
+                  Valide dès impression (y compris en file d&apos;attente) jusqu&apos;à la fin de session ({ticket.status === 'queued' ? 'fin session à venir' : formatTime(ticket.endTime)}).
+                </div>
+              </div>
+            )}
 
             {/* QR Code de Vérification Publique & Suivi en Direct (Modification 2) */}
             <div className="py-3 text-center flex flex-col items-center">

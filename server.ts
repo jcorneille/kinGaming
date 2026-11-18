@@ -414,6 +414,22 @@ app.post('/api/auth/profile', (req, res) => {
 // ============================================================================
 const PUBLIC_TICKETS_FILE = path.join(DATA_DIR, 'public-tickets.json');
 const WHATSAPP_EVENTS_FILE = path.join(DATA_DIR, 'whatsapp-events.json');
+const WIFI_VOUCHERS_FILE = path.join(DATA_DIR, 'wifi-vouchers.json');
+const RESERVATIONS_FILE = path.join(DATA_DIR, 'reservations.json');
+
+interface StoredWifiVoucher {
+  code: string;
+  ssid: string;
+  validFrom: number;
+  expiresAt: number;
+  maxDevices: number;
+  singleUseDeviceBound?: boolean;
+  status: 'ACTIVE' | 'EXPIRED' | 'REVOKED';
+  inQueueWaiting?: boolean;
+  ticketNumber?: string;
+  mikrotikSynced?: boolean;
+  updatedAt: number;
+}
 
 interface StoredPublicTicket {
   id: string;
@@ -421,7 +437,7 @@ interface StoredPublicTicket {
   signedToken: string;
   stationId: number;
   stationName: string;
-  stationType: 'PS4' | 'PS5';
+  stationType: string;
   clientName: string;
   clientPhone?: string;
   clientId?: string;
@@ -440,6 +456,11 @@ interface StoredPublicTicket {
   createdAt: number;
   extendedCount: number;
   transferredFromStationId?: number;
+  wifiVoucher?: StoredWifiVoucher;
+  reservationCode?: string;
+  reservationFeeCDF?: number;
+  reservationFeeUSD?: number;
+  isQueuedPrepaid?: boolean;
   updatedAt: number;
 }
 
@@ -498,8 +519,31 @@ function saveWhatsAppEvents(events: StoredWhatsAppWebhookEvent[]): void {
   }
 }
 
+function loadJsonMap<T>(filePath: string): Record<string, T> {
+  try {
+    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+    if (fs.existsSync(filePath)) {
+      return JSON.parse(fs.readFileSync(filePath, 'utf-8')) || {};
+    }
+  } catch (err) {
+    console.error(`[Store] Erreur lecture ${filePath}:`, err);
+  }
+  return {};
+}
+
+function saveJsonMap<T>(filePath: string, map: Record<string, T>): void {
+  try {
+    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(filePath, JSON.stringify(map, null, 2), 'utf-8');
+  } catch (err) {
+    console.error(`[Store] Erreur écriture ${filePath}:`, err);
+  }
+}
+
 let publicTicketsStore: Record<string, StoredPublicTicket> = loadPublicTickets();
 let whatsappEventsStore: StoredWhatsAppWebhookEvent[] = loadWhatsAppEvents();
+const wifiVouchersStore: Record<string, StoredWifiVoucher> = loadJsonMap<StoredWifiVoucher>(WIFI_VOUCHERS_FILE);
+const reservationsStore: Record<string, any> = loadJsonMap<any>(RESERVATIONS_FILE);
 
 // Synchroniser un ou plusieurs tickets vers le registre public QR
 app.post('/api/tickets/sync', (req, res) => {
@@ -520,9 +564,9 @@ app.post('/api/tickets/sync', (req, res) => {
       id: String(t.id || ''),
       ticketNumber: String(t.ticketNumber || ''),
       signedToken: String(t.signedToken),
-      stationId: Number(t.stationId || 1),
-      stationName: String(t.stationName || `Poste ${t.stationId || 1}`),
-      stationType: t.stationType === 'PS5' ? 'PS5' : 'PS4',
+      stationId: Number(t.stationId || 0),
+      stationName: String(t.stationName || (t.stationId ? `Poste ${t.stationId}` : "File d'attente")),
+      stationType: String(t.stationType || 'PS4'),
       clientName: String(t.clientName || 'Client'),
       clientPhone: t.clientPhone ? String(t.clientPhone) : undefined,
       clientId: t.clientId ? String(t.clientId) : undefined,
@@ -541,12 +585,24 @@ app.post('/api/tickets/sync', (req, res) => {
       createdAt: Number(t.createdAt || now),
       extendedCount: Number(t.extendedCount || 0),
       transferredFromStationId: t.transferredFromStationId ? Number(t.transferredFromStationId) : undefined,
+      wifiVoucher: t.wifiVoucher ? { ...t.wifiVoucher, updatedAt: now } : undefined,
+      reservationCode: t.reservationCode ? String(t.reservationCode) : undefined,
+      reservationFeeCDF: typeof t.reservationFeeCDF === 'number' ? t.reservationFeeCDF : undefined,
+      reservationFeeUSD: typeof t.reservationFeeUSD === 'number' ? t.reservationFeeUSD : undefined,
+      isQueuedPrepaid: Boolean(t.isQueuedPrepaid),
       updatedAt: now,
     };
+    if (t.wifiVoucher?.code) {
+      wifiVouchersStore[String(t.wifiVoucher.code)] = {
+        ...t.wifiVoucher,
+        updatedAt: now,
+      };
+    }
     syncedCount++;
   }
 
   savePublicTickets(publicTicketsStore);
+  saveJsonMap(WIFI_VOUCHERS_FILE, wifiVouchersStore);
   return res.status(200).json({ success: true, count: syncedCount });
 });
 
@@ -698,9 +754,61 @@ app.get('/api/whatsapp/webhook-events', (req, res) => {
   res.status(200).json({ events });
 });
 
+function ensurePlayableWavAudio(base64Data: string, mimeType: string): { audioBase64: string; mimeType: string } {
+  const lowerMime = (mimeType || '').toLowerCase();
+  const rawBuffer = Buffer.from(base64Data, 'base64');
+  const hasRiffHeader = rawBuffer.length >= 12 && rawBuffer.subarray(0, 4).toString('ascii') === 'RIFF';
+  const hasCompressedHeader =
+    rawBuffer.length >= 4 &&
+    (rawBuffer.subarray(0, 3).toString('ascii') === 'ID3' ||
+      rawBuffer.subarray(0, 4).toString('ascii') === 'OggS' ||
+      rawBuffer.subarray(0, 4).toString('ascii') === 'fLaC' ||
+      (rawBuffer[0] === 0xff && (rawBuffer[1] & 0xe0) === 0xe0));
+
+  const isRawPcm =
+    !hasRiffHeader &&
+    !hasCompressedHeader &&
+    (lowerMime.includes('l16') || lowerMime.includes('pcm') || lowerMime.includes('raw') || lowerMime.includes('wav') || !lowerMime);
+
+  if (!isRawPcm) {
+    return { audioBase64: base64Data, mimeType: mimeType || 'audio/wav' };
+  }
+
+  const rateMatch = lowerMime.match(/rate=(\d+)/);
+  const channelsMatch = lowerMime.match(/channels=(\d+)/);
+  const sampleRate = rateMatch ? Math.max(8000, Math.min(96000, Number(rateMatch[1]))) : 24000;
+  const numChannels = channelsMatch ? Math.max(1, Math.min(2, Number(channelsMatch[1]))) : 1;
+  const bitsPerSample = 16;
+  const byteRate = sampleRate * numChannels * (bitsPerSample / 8);
+  const blockAlign = numChannels * (bitsPerSample / 8);
+  const dataSize = rawBuffer.length;
+
+  const wavHeader = Buffer.alloc(44);
+  wavHeader.write('RIFF', 0, 'ascii');
+  wavHeader.writeUInt32LE(36 + dataSize, 4);
+  wavHeader.write('WAVE', 8, 'ascii');
+  wavHeader.write('fmt ', 12, 'ascii');
+  wavHeader.writeUInt32LE(16, 16); // PCM chunk size
+  wavHeader.writeUInt16LE(1, 20); // PCM format = 1
+  wavHeader.writeUInt16LE(numChannels, 22);
+  wavHeader.writeUInt32LE(sampleRate, 24);
+  wavHeader.writeUInt32LE(byteRate, 28);
+  wavHeader.writeUInt16LE(blockAlign, 32);
+  wavHeader.writeUInt16LE(bitsPerSample, 34);
+  wavHeader.write('data', 36, 'ascii');
+  wavHeader.writeUInt32LE(dataSize, 40);
+
+  const wavBuffer = Buffer.concat([wavHeader, rawBuffer]);
+  return {
+    audioBase64: wavBuffer.toString('base64'),
+    mimeType: 'audio/wav',
+  };
+}
+
 /**
  * 3. Synthèse Vocale Humaine via Gemini TTS (POST /api/tts/speak)
  * Voix féminine naturelle ('Kore') ou masculine naturelle ('Charon') avec cache mémoire LRU
+ * et normalisation RIFF/WAV pour compatibilité totale Windows & macOS (Chrome, Edge, Safari, Firefox)
  */
 app.post('/api/tts/speak', async (req, res) => {
   try {
@@ -772,8 +880,8 @@ app.post('/api/tts/speak', async (req, res) => {
         }),
     ];
 
-    let audioBase64: string | undefined;
-    let audioMime = 'audio/wav';
+    let rawAudioBase64: string | undefined;
+    let rawAudioMime = 'audio/wav';
     let lastErr: any = null;
 
     for (const runAttempt of attempts) {
@@ -781,8 +889,8 @@ app.post('/api/tts/speak', async (req, res) => {
         const response = await runAttempt();
         const part = response?.candidates?.[0]?.content?.parts?.[0]?.inlineData;
         if (part?.data) {
-          audioBase64 = part.data;
-          audioMime = part.mimeType || 'audio/wav';
+          rawAudioBase64 = part.data;
+          rawAudioMime = part.mimeType || 'audio/wav';
           break;
         }
       } catch (err: any) {
@@ -790,7 +898,7 @@ app.post('/api/tts/speak', async (req, res) => {
       }
     }
 
-    if (!audioBase64) {
+    if (!rawAudioBase64) {
       console.warn('[Gemini TTS Fallback]:', lastErr?.message || lastErr);
       return res.status(503).json({
         success: false,
@@ -799,16 +907,23 @@ app.post('/api/tts/speak', async (req, res) => {
       });
     }
 
+    const normalized = ensurePlayableWavAudio(rawAudioBase64, rawAudioMime);
+
     if (ttsMemoryCache.size >= 100) {
       const firstKey = ttsMemoryCache.keys().next().value;
       if (firstKey) ttsMemoryCache.delete(firstKey);
     }
-    ttsMemoryCache.set(cacheKey, { audioBase64, mimeType: audioMime, voiceName, createdAt: Date.now() });
+    ttsMemoryCache.set(cacheKey, {
+      audioBase64: normalized.audioBase64,
+      mimeType: normalized.mimeType,
+      voiceName,
+      createdAt: Date.now(),
+    });
 
     return res.status(200).json({
       success: true,
-      audioBase64,
-      mimeType: audioMime,
+      audioBase64: normalized.audioBase64,
+      mimeType: normalized.mimeType,
       voiceName,
       provider: 'GEMINI_TTS',
     });
@@ -1133,6 +1248,222 @@ app.post('/api/shelly/trigger', async (req, res) => {
     state: normalizedState,
     note: `Relais ${cleanIp} non joignable depuis ce serveur (commandé via passerelle MQTT locale).`,
   });
+});
+
+/**
+ * 4c. Portail Captif Wi-Fi Multi-Appareils MikroTik Hotspot
+ * 1h–2h : 1 app. | 3h : 2 app. | 4h : 3 app. | 5h+ : 4 app.
+ * Synchronise le voucher vers RouterOS REST API (/rest/ip/hotspot/user)
+ */
+app.post('/api/wifi/voucher', async (req, res) => {
+  const { voucher, action, mikrotikHost, mikrotikUser } = req.body || {};
+  if (!voucher || !voucher.code) {
+    return res.status(400).json({ success: false, error: 'Code Wi-Fi manquant' });
+  }
+
+  const now = Date.now();
+  const code = String(voucher.code).trim().toUpperCase();
+  const expiresAt = Number(voucher.expiresAt || now + 3600000);
+  const remainingSec = Math.max(60, Math.ceil((expiresAt - now) / 1000));
+  const maxDevices = Math.min(4, Math.max(1, Number(voucher.maxDevices || 1)));
+
+  const stored: StoredWifiVoucher = {
+    code,
+    ssid: String(voucher.ssid || 'GOZA-WiFi'),
+    validFrom: Number(voucher.validFrom || now),
+    expiresAt,
+    maxDevices,
+    singleUseDeviceBound: maxDevices === 1,
+    status: voucher.status === 'REVOKED' || voucher.status === 'EXPIRED' ? voucher.status : 'ACTIVE',
+    inQueueWaiting: Boolean(voucher.inQueueWaiting),
+    ticketNumber: voucher.ticketNumber ? String(voucher.ticketNumber) : undefined,
+    mikrotikSynced: false,
+    updatedAt: now,
+  };
+
+  // Tentative d'envoi vers MikroTik RouterOS v7 REST API (si LAN accessible et identifiants configurés)
+  const host = String(process.env.MIKROTIK_HOST || mikrotikHost || '').trim();
+  const apiUser = String(process.env.MIKROTIK_USER || mikrotikUser || 'goza-api').trim();
+  const apiPass = String(process.env.MIKROTIK_PASS || '').trim();
+  let mikrotikMode = 'HOTSPOT_LOCAL_REGISTRY';
+
+  if (host && apiPass && /^(\d{1,3}\.){3}\d{1,3}$/.test(host)) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 1400);
+    try {
+      const authHeader = 'Basic ' + Buffer.from(`${apiUser}:${apiPass}`).toString('base64');
+      const hh = Math.floor(remainingSec / 3600);
+      const mm = Math.floor((remainingSec % 3600) / 60);
+      const ss = remainingSec % 60;
+      const limitUptime = `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
+      const profileName = maxDevices === 1 ? 'goza-1device' : `goza-${maxDevices}devices`;
+      const r = await fetch(`http://${host}/rest/ip/hotspot/user/add`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: authHeader },
+        body: JSON.stringify({
+          name: code,
+          password: code,
+          profile: profileName,
+          'limit-uptime': limitUptime,
+          comment: `GOZA ${stored.ticketNumber || ''} (${maxDevices} appareil${maxDevices > 1 ? 's' : ''} max)`,
+        }),
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+      if (r.ok) {
+        stored.mikrotikSynced = true;
+        mikrotikMode = 'MIKROTIK_ROUTEROS_LIVE';
+      }
+    } catch {
+      clearTimeout(timer);
+    }
+  }
+
+  wifiVouchersStore[code] = stored;
+  saveJsonMap(WIFI_VOUCHERS_FILE, wifiVouchersStore);
+  console.log(`[Wi-Fi Hotspot] Voucher ${code} (${action || 'CREATE'}) · ${maxDevices} appareil(s) · Expire ${new Date(expiresAt).toLocaleTimeString('fr-FR')} [${mikrotikMode}]`);
+
+  return res.status(200).json({
+    success: true,
+    mode: mikrotikMode,
+    voucher: stored,
+  });
+});
+
+app.post('/api/wifi/voucher/revoke', async (req, res) => {
+  const { voucher } = req.body || {};
+  const code = String(voucher?.code || '').trim().toUpperCase();
+  if (!code) {
+    return res.status(400).json({ success: false, error: 'Code Wi-Fi manquant' });
+  }
+  const now = Date.now();
+  const existing = wifiVouchersStore[code];
+  const fallbackDevices = Math.min(4, Math.max(1, Number(voucher?.maxDevices || existing?.maxDevices || 1)));
+  wifiVouchersStore[code] = {
+    ...(existing || {
+      code,
+      ssid: String(voucher?.ssid || 'GOZA-WiFi'),
+      validFrom: Number(voucher?.validFrom || now),
+      maxDevices: fallbackDevices,
+      singleUseDeviceBound: fallbackDevices === 1,
+    }),
+    expiresAt: now,
+    status: voucher?.status === 'REVOKED' ? 'REVOKED' : 'EXPIRED',
+    inQueueWaiting: false,
+    updatedAt: now,
+  };
+  saveJsonMap(WIFI_VOUCHERS_FILE, wifiVouchersStore);
+  return res.status(200).json({ success: true, voucher: wifiVouchersStore[code] });
+});
+
+app.get('/api/wifi/vouchers', (_req, res) => {
+  const vouchers = Object.values(wifiVouchersStore).sort((a, b) => b.updatedAt - a.updatedAt);
+  res.status(200).json({ vouchers });
+});
+
+/**
+ * 4d. Réservations Espace Client (Mobile Money OTP >= 3h + 15% frais ou Réservation Espèces Guichet)
+ */
+const momoOtpStore: Record<string, { otpCode: string; clientPhone: string; network: string; expiresAt: number }> = {};
+
+app.post('/api/reservations/momo-otp', (req, res) => {
+  const { clientPhone, network, amountCDF, amountUSD } = req.body || {};
+  const cleanPhone = String(clientPhone || '').trim();
+  const cleanNetwork = String(network || 'MPESA').trim();
+  if (!cleanPhone || cleanPhone.replace(/\D/g, '').length < 9) {
+    return res.status(400).json({ success: false, error: 'Numéro de téléphone invalide pour l’envoi de l’OTP.' });
+  }
+  const otpCode = String(Math.floor(100000 + Math.random() * 900000));
+  const expiresAt = Date.now() + 5 * 60 * 1000;
+  const otpId = `otp-${Date.now().toString(36)}`;
+  momoOtpStore[otpId] = {
+    otpCode,
+    clientPhone: cleanPhone,
+    network: cleanNetwork,
+    expiresAt,
+  };
+  return res.status(200).json({
+    success: true,
+    otpId,
+    otpCode,
+    network: cleanNetwork,
+    clientPhone: cleanPhone,
+    amountCDF: Number(amountCDF || 0),
+    amountUSD: Number(amountUSD || 0),
+    expiresAt,
+  });
+});
+
+app.get('/api/reservations', (_req, res) => {
+  const list = Object.values(reservationsStore).sort((a: any, b: any) => (b.createdAt || 0) - (a.createdAt || 0));
+  res.status(200).json({ reservations: list });
+});
+
+app.post('/api/reservations', (req, res) => {
+  const { reservation } = req.body || {};
+  if (!reservation || !reservation.reservationCode) {
+    return res.status(400).json({ success: false, error: 'Réservation invalide' });
+  }
+  if (reservation.paymentMode !== 'MOBILE_MONEY') {
+    return res.status(400).json({
+      success: false,
+      error: 'Les réservations se font uniquement par Mobile Money depuis l’Espace Client.',
+    });
+  }
+  if (Number(reservation.durationMinutes || 0) < 180) {
+    return res.status(400).json({
+      success: false,
+      error: 'La réservation Mobile Money depuis l’espace client exige 3h (180 min) minimum.',
+    });
+  }
+  if (
+    reservation.status === 'CANCELLED' &&
+    reservation.cancelReason === 'CLIENT_SELF_CANCEL' &&
+    Number(reservation.reservedForTime || 0) - Date.now() < 60 * 60000
+  ) {
+    return res.status(400).json({
+      success: false,
+      error: "Annulation refusée : possible uniquement au moins 1h avant l'heure réservée.",
+    });
+  }
+  if (
+    reservation.status === 'PAID_WAITING_CHECKIN' &&
+    reservation.preferredStationId
+  ) {
+    const reqStart = Number(reservation.reservedForTime || 0);
+    const reqEnd = reqStart + Number(reservation.durationMinutes || 0) * 60000;
+    const conflict = Object.values(reservationsStore).find((existing: any) => {
+      if (!existing || existing.reservationCode === reservation.reservationCode) return false;
+      if (
+        existing.status !== 'PAID_WAITING_CHECKIN' &&
+        existing.status !== 'VALIDATED_IN_QUEUE' &&
+        existing.status !== 'VALIDATED_ON_STATION'
+      ) {
+        return false;
+      }
+      if (
+        Number(existing.preferredStationId || 0) !== Number(reservation.preferredStationId) &&
+        Number(existing.stationId || 0) !== Number(reservation.preferredStationId)
+      ) {
+        return false;
+      }
+      const eStart = Number(existing.reservedForTime || 0);
+      const eEnd = eStart + Number(existing.playableDurationMinutes ?? existing.durationMinutes ?? 0) * 60000;
+      return reqStart < eEnd && reqEnd > eStart;
+    });
+    if (conflict) {
+      return res.status(409).json({
+        success: false,
+        error: "Ce n'est pas disponible : ce poste est déjà réservé sur ce créneau.",
+      });
+    }
+  }
+  reservationsStore[String(reservation.reservationCode).toUpperCase()] = {
+    ...reservation,
+    updatedAt: Date.now(),
+  };
+  saveJsonMap(RESERVATIONS_FILE, reservationsStore);
+  return res.status(200).json({ success: true, reservation });
 });
 
 /**

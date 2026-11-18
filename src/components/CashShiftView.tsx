@@ -358,43 +358,32 @@ export const CashShiftView: React.FC<CashShiftViewProps> = ({
 
                 {/* Mode de règlement snack */}
                 <div>
-                  <span className="text-[10px] text-slate-400 block mb-1">Règlement :</span>
-                  <div className="grid grid-cols-2 gap-1.5">
-                    {[
-                      { id: 'CASH_CDF', label: 'Espèces FC' },
-                      { id: 'CASH_USD', label: 'Espèces USD' },
-                      { id: 'ILLICO_CASH', label: 'Illico Cash' },
-                      { id: 'MPESA', label: 'M-Pesa' },
-                      { id: 'ORANGE_MONEY', label: 'Orange Money' },
-                      { id: 'AIRTEL_MONEY', label: 'Airtel Money' },
-                      { id: 'MIXED', label: 'Paiement Mixte' },
-                    ].map((m) => (
-                      <button
-                        key={m.id}
-                        type="button"
-                        onClick={() => {
-                          setSnackPaymentMethod(m.id as PaymentMethod);
-                          setSnackPaymentError(null);
-                          if (m.id === 'MIXED' && !snackMixedCashCDF && !snackMixedElecCDF) {
-                            const half = Math.round(cartTotalCDF / 2 / 100) * 100;
-                            setSnackMixedCashCDF(String(half));
-                            setSnackMixedElecCDF(String(Math.max(0, cartTotalCDF - half)));
-                          }
-                        }}
-                        className={`py-1.5 px-2 text-[11px] font-semibold rounded border cursor-pointer ${
-                          m.id === 'MIXED' ? 'col-span-2' : ''
-                        } ${
-                          snackPaymentMethod === m.id
-                            ? m.id === 'MIXED'
-                              ? 'bg-purple-600 border-purple-400 text-white'
-                              : 'bg-blue-600 border-blue-400 text-white'
-                            : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-white'
-                        }`}
-                      >
-                        {m.label}
-                      </button>
-                    ))}
-                  </div>
+                  <label htmlFor="snack-payment-method" className="text-[11px] font-semibold text-slate-300 block mb-1">
+                    Moyen de paiement :
+                  </label>
+                  <select
+                    id="snack-payment-method"
+                    value={snackPaymentMethod}
+                    onChange={(e) => {
+                      const nextMethod = e.target.value as PaymentMethod;
+                      setSnackPaymentMethod(nextMethod);
+                      setSnackPaymentError(null);
+                      if (nextMethod === 'MIXED' && !snackMixedCashCDF && !snackMixedElecCDF) {
+                        const half = Math.round(cartTotalCDF / 2 / 100) * 100;
+                        setSnackMixedCashCDF(String(half));
+                        setSnackMixedElecCDF(String(Math.max(0, cartTotalCDF - half)));
+                      }
+                    }}
+                    className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs font-semibold text-white focus:outline-none focus:border-blue-500 cursor-pointer"
+                  >
+                    <option value="CASH_CDF">Espèces Francs (FC)</option>
+                    <option value="CASH_USD">Espèces Dollars (USD $)</option>
+                    <option value="MPESA">Mobile Money — M-Pesa (Vodacom)</option>
+                    <option value="ORANGE_MONEY">Mobile Money — Orange Money</option>
+                    <option value="AIRTEL_MONEY">Mobile Money — Airtel Money</option>
+                    <option value="ILLICO_CASH">Illico Cash (Rawbank)</option>
+                    <option value="MIXED">Paiement Mixte (Multi-canaux)</option>
+                  </select>
                 </div>
 
                 {['ILLICO_CASH', 'MPESA', 'ORANGE_MONEY', 'AIRTEL_MONEY'].includes(snackPaymentMethod) && (
@@ -606,7 +595,7 @@ export const CashShiftView: React.FC<CashShiftViewProps> = ({
       {/* Onglet 2 : Tiroir-Caisse & Clôture */}
       {subTab === 'shift' && (
         <div className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
             <div className="bg-slate-900 border border-slate-800 rounded-xl p-3.5 space-y-1">
               <span className="text-[11px] text-slate-400">Fond Initial</span>
               <div className="font-mono font-bold text-base text-white">
