@@ -493,6 +493,17 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
       }
     }
 
+    if (activeSection === 'domotique') {
+      const onTemp = draftSettings.lightingACSchedule?.acTargetOnTempC ?? 27;
+      const offTemp = draftSettings.lightingACSchedule?.acTargetOffTempC ?? 23.5;
+      if (draftSettings.lightingACSchedule?.thermostatEnabled && offTemp >= onTemp) {
+        setValidationError(
+          `Le seuil d'arrêt de la clim (${offTemp}°C) doit être strictement inférieur au seuil d'allumage (${onTemp}°C).`
+        );
+        return;
+      }
+    }
+
     // Generate differences summary
     const diffs: Array<{ label: string; oldVal: string; newVal: string }> = [];
     let businessImpact = '';
@@ -620,6 +631,11 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
         label: 'Extinction inactivité',
         oldVal: `${settings.idleAutoCutMinutes} min`,
         newVal: `${draftSettings.idleAutoCutMinutes} min`,
+      });
+      diffs.push({
+        label: 'Seuils Thermostat Clim (°C)',
+        oldVal: `${settings.lightingACSchedule?.thermostatEnabled ? 'Actif' : 'Inactif'} (ON ≥ ${settings.lightingACSchedule?.acTargetOnTempC ?? 27}°C / OFF ≤ ${settings.lightingACSchedule?.acTargetOffTempC ?? 23.5}°C)`,
+        newVal: `${draftSettings.lightingACSchedule?.thermostatEnabled ? 'Actif' : 'Inactif'} (ON ≥ ${draftSettings.lightingACSchedule?.acTargetOnTempC ?? 27}°C / OFF ≤ ${draftSettings.lightingACSchedule?.acTargetOffTempC ?? 23.5}°C)`,
       });
     } else if (activeSection === 'security') {
       diffs.push({
@@ -2089,7 +2105,7 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
                             <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-800">
                               <div className="flex flex-wrap items-center gap-2">
                                 <span className="text-[10px] text-slate-400">Consoles :</span>
-                                {Array.from(new Set(['PS4', 'PS5', ...stations.map((s) => s.type)])).map((tp) => {
+                                {Array.from(new Set([...CONSOLE_CATALOG.map((c) => c.code), ...stations.map((s) => s.type)])).map((tp) => {
                                   const checked = slot.applicableStationTypes.includes(tp);
                                   return (
                                     <label key={tp} className="flex items-center gap-1 text-[11px] text-slate-200 cursor-pointer">
@@ -2449,7 +2465,7 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
                             <div className="flex flex-wrap items-center justify-between gap-3 pt-1 border-t border-slate-800/80 text-[11px]">
                               <div className="flex flex-wrap items-center gap-3">
                                 <span className="text-slate-400">Consoles :</span>
-                                {Array.from(new Set(['PS4', 'PS5', ...stations.map((s) => s.type)])).map((tp) => {
+                                {Array.from(new Set([...CONSOLE_CATALOG.map((c) => c.code), ...stations.map((s) => s.type)])).map((tp) => {
                                   const checked = promo.applicableStationTypes.includes(tp);
                                   return (
                                     <label key={tp} className="flex items-center gap-1 text-slate-200 cursor-pointer">
@@ -3102,6 +3118,140 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
                         </div>
                       </div>
                     </div>
+                  </div>
+
+                  {/* Configuration des seuils °C du Thermostat Automatique Clim */}
+                  <div className="p-4 bg-sky-950/20 border border-sky-500/35 rounded-xl space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <label className="block text-xs font-bold text-sky-300">
+                          Configuration des Seuils de Climatisation (Thermostat Automatique °C)
+                        </label>
+                        <p className="text-[11px] text-slate-400 mt-0.5">
+                          Détermine à quelle température (°C) la clim s’allume automatiquement et à quelle température elle s’arrête (sonde Shelly H&amp;T / DS18B20).
+                        </p>
+                      </div>
+                      <label className="flex items-center gap-1.5 text-xs text-sky-300 font-semibold cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(draftSettings.lightingACSchedule?.thermostatEnabled)}
+                          onChange={(e) =>
+                            setDraftSettings({
+                              ...draftSettings,
+                              lightingACSchedule: {
+                                ...draftSettings.lightingACSchedule,
+                                thermostatEnabled: e.target.checked,
+                              },
+                            })
+                          }
+                          className="rounded border-slate-700 text-sky-500"
+                        />
+                        <span>Thermostat Auto Actif</span>
+                      </label>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 text-xs">
+                      <div>
+                        <span className="text-[11px] text-rose-300 font-semibold block mb-1">
+                          Allumer la Clim si &ge; (°C)
+                        </span>
+                        <div className="relative">
+                          <input
+                            type="number"
+                            step="0.5"
+                            min={20}
+                            max={38}
+                            value={draftSettings.lightingACSchedule?.acTargetOnTempC ?? 27}
+                            onChange={(e) =>
+                              setDraftSettings({
+                                ...draftSettings,
+                                lightingACSchedule: {
+                                  ...draftSettings.lightingACSchedule,
+                                  acTargetOnTempC: Number(e.target.value),
+                                },
+                              })
+                            }
+                            className="w-full bg-slate-900 border border-rose-500/40 rounded-lg pl-3 pr-9 py-2 text-white font-mono text-xs"
+                          />
+                          <span className="absolute right-3 top-2 text-xs font-mono text-rose-300">°C</span>
+                        </div>
+                      </div>
+
+                      <div>
+                        <span className="text-[11px] text-emerald-300 font-semibold block mb-1">
+                          Arrêter la Clim si &le; (°C)
+                        </span>
+                        <div className="relative">
+                          <input
+                            type="number"
+                            step="0.5"
+                            min={16}
+                            max={30}
+                            value={draftSettings.lightingACSchedule?.acTargetOffTempC ?? 23.5}
+                            onChange={(e) =>
+                              setDraftSettings({
+                                ...draftSettings,
+                                lightingACSchedule: {
+                                  ...draftSettings.lightingACSchedule,
+                                  acTargetOffTempC: Number(e.target.value),
+                                },
+                              })
+                            }
+                            className="w-full bg-slate-900 border border-emerald-500/40 rounded-lg pl-3 pr-9 py-2 text-white font-mono text-xs"
+                          />
+                          <span className="absolute right-3 top-2 text-xs font-mono text-emerald-300">°C</span>
+                        </div>
+                      </div>
+
+                      <div>
+                        <span className="text-[11px] text-sky-300 font-semibold block mb-1">
+                          Température Sonde Actuelle (°C)
+                        </span>
+                        <div className="relative">
+                          <input
+                            type="number"
+                            step="0.5"
+                            min={16}
+                            max={40}
+                            value={draftSettings.lightingACSchedule?.currentRoomTempC ?? 26.5}
+                            onChange={(e) =>
+                              setDraftSettings({
+                                ...draftSettings,
+                                lightingACSchedule: {
+                                  ...draftSettings.lightingACSchedule,
+                                  currentRoomTempC: Number(e.target.value),
+                                },
+                              })
+                            }
+                            className="w-full bg-slate-900 border border-sky-500/40 rounded-lg pl-3 pr-9 py-2 text-white font-mono text-xs"
+                          />
+                          <span className="absolute right-3 top-2 text-xs font-mono text-sky-300">°C</span>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col justify-end">
+                        <label className="flex items-center gap-2 bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-2 text-[11px] text-slate-300 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={draftSettings.lightingACSchedule?.thermostatRespectSchedule !== false}
+                            onChange={(e) =>
+                              setDraftSettings({
+                                ...draftSettings,
+                                lightingACSchedule: {
+                                  ...draftSettings.lightingACSchedule,
+                                  thermostatRespectSchedule: e.target.checked,
+                                },
+                              })
+                            }
+                            className="rounded border-slate-700 text-cyan-500"
+                          />
+                          <span>Couper hors plage horaire</span>
+                        </label>
+                      </div>
+                    </div>
+                    <p className="text-[11px] text-slate-400">
+                      Exemple : avec Allumage à <strong>27°C</strong> et Arrêt à <strong>23.5°C</strong>, les clims démarrent dès qu’il fait chaud et s’éteignent dès que la salle est fraîche, en évitant les démarrages répétés.
+                    </p>
                   </div>
 
                   {/* Passerelle MQTT & Automatismes Domotiques */}

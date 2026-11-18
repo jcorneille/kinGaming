@@ -32,21 +32,21 @@ export const WiringDiagramsSvg: React.FC<WiringDiagramsSvgProps> = ({
           </h4>
           <span className="text-[11px] font-mono text-slate-400">Norme couleurs 230V / 50Hz RDC</span>
         </div>
-        <div className="flex flex-wrap gap-3 text-[11px]">
+        <div className="flex flex-wrap gap-2.5 text-[11px]">
           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-rose-500/15 border border-rose-500/30 text-rose-300 font-semibold">
-            <span className="w-3 h-1.5 rounded-full bg-rose-500" /> Phase Permanente (L - Rouge/Marron)
+            <span className="w-3 h-1.5 rounded-full bg-rose-500" /> Câble Courant 230V (Phase L Rouge / Neutre N Bleu / Terre PE Vert-Jaune)
           </span>
           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-amber-500/15 border border-amber-500/30 text-amber-300 font-semibold">
             <span className="w-3 h-1.5 rounded-full bg-amber-400" /> Phase Commandée (O - Orange, sortie Shelly)
           </span>
           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-blue-500/15 border border-blue-500/30 text-blue-300 font-semibold">
-            <span className="w-3 h-1.5 rounded-full bg-blue-500" /> Neutre (N - Bleu)
+            <span className="w-3 h-1.5 rounded-full bg-blue-500" /> Câble Réseau RJ45 Cat6 (Starlink → MikroTik → Switch 16p → PC &amp; Consoles)
           </span>
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 font-semibold">
-            <span className="w-3 h-1.5 rounded-full bg-emerald-400" /> Terre de Protection (PE - Vert/Jaune)
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-purple-500/15 border border-purple-500/30 text-purple-300 font-semibold">
+            <span className="w-3 h-1.5 rounded-full bg-purple-400" /> Câble Imprimante USB/LAN + Tiroir RJ11
           </span>
           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 font-semibold">
-            <span className="w-3 h-1.5 rounded-full bg-cyan-400" /> Câble RJ45 / Wi-Fi 2.4GHz
+            <span className="w-3 h-1.5 rounded-full bg-cyan-400" /> Wi-Fi 2.4 GHz IoT (Relais Shelly &amp; Capteur Température .144)
           </span>
         </div>
       </div>
@@ -205,6 +205,12 @@ export const WiringDiagramsSvg: React.FC<WiringDiagramsSvgProps> = ({
               <text x="558" y="114" textAnchor="middle" fill="#94a3b8" fontSize="8">L (2/T1) · N (4/T2) · PE</text>
               <text x="558" y="127" textAnchor="middle" fill="#fbbf24" fontSize="8">Délesté si SNEL coupé</text>
 
+              {/* Capteur Température Auto Thermostat */}
+              <path d="M558 136 V164 H227 V178" fill="none" stroke="#22d3ee" strokeWidth="1.6" strokeDasharray="4 2" />
+              <rect x="442" y="144" width="188" height="38" rx="6" fill="#082f49" stroke="#38bdf8" strokeWidth="1.4" />
+              <text x="536" y="160" textAnchor="middle" fill="#67e8f9" fontSize="9" fontWeight="bold">Capteur Temp. Shelly H&amp;T / DS18B20 (.144)</text>
+              <text x="536" y="174" textAnchor="middle" fill="#cbd5e1" fontSize="8">Auto ON &ge;27°C / OFF &le;23.5°C (Thermostat GOZA)</text>
+
               {/* PARTIE BASSE : LUMIERES & EXTRACTEUR */}
               <rect x="14" y="200" width="632" height="106" rx="10" fill="#09111e" stroke="#334155" strokeWidth="1.2" />
               <text x="26" y="218" fill="#fde047" fontSize="10.5" fontWeight="bold">B. Éclairage Néon/LED (.140 - 85W) &amp; Extracteur d&apos;air (.143 - 110W)</text>
@@ -234,7 +240,7 @@ export const WiringDiagramsSvg: React.FC<WiringDiagramsSvgProps> = ({
             </svg>
           </div>
           <p className="text-[11px] text-slate-400 leading-relaxed">
-            <strong className="text-sky-300">Pourquoi le Contacteur 25A :</strong> Un compresseur de climatiseur tire jusqu&apos;à 15–20A au démarrage, ce qui collerait les contacts d&apos;un petit Shelly. Le Shelly pilote uniquement la bobine <code className="text-amber-300">A1/A2</code> (quelques milliampères), et le Contacteur 25A commute la puissance réelle vers le climatiseur.
+            <strong className="text-sky-300">Thermostat Auto + Contacteur 25A :</strong> La sonde <code className="text-cyan-300">Shelly Plus H&amp;T / Add-On DS18B20 (.144)</code> mesure la chaleur réelle : dès 27°C GOZA enclenche le Shelly qui excite la bobine <code className="text-amber-300">A1/A2</code> du Contacteur 25A ; à 23.5°C les clims s&apos;éteignent seules.
           </p>
         </div>
 
@@ -324,75 +330,83 @@ export const WiringDiagramsSvg: React.FC<WiringDiagramsSvgProps> = ({
           </p>
         </div>
 
-        {/* SCHÉMA 4 : Branchements Routeur MikroTik vers Tous les Appareils */}
+        {/* SCHÉMA 4 : Branchements Routeur MikroTik + Switch 16p + Caisse + Local & Distance */}
         <div className="bg-slate-950 border border-cyan-500/30 rounded-xl p-4 space-y-3">
           <div className="flex items-center justify-between gap-2">
             <h5 className="text-xs font-bold text-cyan-300 flex items-center gap-1.5">
               <Router className="w-4 h-4" />
-              <span>4. Branchements Complets du Routeur MikroTik vers Tous les Appareils</span>
+              <span>4. Réseau MikroTik + Switch 16p + Caisse (Câbles Différenciés + Local/Distance)</span>
             </h5>
             <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300">
-              RJ45 + Wi-Fi 2.4GHz + VLAN
+              RJ45 Cat6 + USB/RJ11 + Wi-Fi 2.4G
             </span>
           </div>
 
           <div className="overflow-x-auto">
-            <svg viewBox="0 0 660 280" className="w-full min-w-[540px] h-auto rounded-lg bg-[#050811] border border-slate-800">
-              {/* Alimentation Secourue */}
-              <rect x="14" y="16" width="136" height="74" rx="8" fill="#171207" stroke="#f59e0b" />
-              <text x="82" y="36" textAnchor="middle" fill="#fcd34d" fontSize="10" fontWeight="bold">Multiprise Onduleur</text>
-              <text x="82" y="51" textAnchor="middle" fill="#cbd5e1" fontSize="8.5">(Disj. 10A Secouru 230V)</text>
-              <text x="82" y="67" textAnchor="middle" fill="#94a3b8" fontSize="8">Alimente : Starlink, MikroTik,</text>
-              <text x="82" y="79" textAnchor="middle" fill="#94a3b8" fontSize="8">PC GOZA &amp; Imprimante 80mm</text>
+            <svg viewBox="0 0 660 300" className="w-full min-w-[540px] h-auto rounded-lg bg-[#050811] border border-slate-800">
+              {/* Alimentation Secourue (Courant 230V Orange/Rouge) */}
+              <rect x="14" y="14" width="136" height="72" rx="8" fill="#171207" stroke="#f59e0b" />
+              <text x="82" y="33" textAnchor="middle" fill="#fcd34d" fontSize="9.5" fontWeight="bold">Multiprise Onduleur</text>
+              <text x="82" y="47" textAnchor="middle" fill="#cbd5e1" fontSize="8">Courant 230V (Disj. 10A)</text>
+              <text x="82" y="61" textAnchor="middle" fill="#94a3b8" fontSize="7.8">Starlink, MikroTik, Switch 16p,</text>
+              <text x="82" y="73" textAnchor="middle" fill="#94a3b8" fontSize="7.8">PC GOZA &amp; Imprimante 80mm</text>
 
-              {/* Flèches alim 230V vers Starlink & MikroTik */}
-              <path d="M150 40 H200" fill="none" stroke="#f59e0b" strokeWidth="2" />
-              <path d="M150 68 H180 V128 H200" fill="none" stroke="#f59e0b" strokeWidth="2" />
+              {/* Câbles courant 230V */}
+              <path d="M150 38 H194" fill="none" stroke="#f97316" strokeWidth="2.4" />
+              <path d="M150 64 H172 V128 H194" fill="none" stroke="#f97316" strokeWidth="2.4" />
 
               {/* Starlink */}
-              <rect x="200" y="16" width="176" height="62" rx="8" fill="#0f172a" stroke="#3b82f6" strokeWidth="1.6" />
-              <text x="288" y="37" textAnchor="middle" fill="#93c5fd" fontSize="10.5" fontWeight="bold">Routeur Starlink (Bypass)</text>
-              <text x="288" y="53" textAnchor="middle" fill="#cbd5e1" fontSize="8.5">Parabole extérieure → Mode Pont</text>
-              <text x="288" y="67" textAnchor="middle" fill="#38bdf8" fontSize="8">Sortie RJ45 → Port ether1 (WAN)</text>
+              <rect x="194" y="14" width="194" height="60" rx="8" fill="#0f172a" stroke="#3b82f6" strokeWidth="1.6" />
+              <text x="291" y="34" textAnchor="middle" fill="#93c5fd" fontSize="10" fontWeight="bold">Starlink (Bypass) ↔ Cloud</text>
+              <text x="291" y="49" textAnchor="middle" fill="#cbd5e1" fontSize="8">WhatsApp API + Accès Distance</text>
+              <text x="291" y="63" textAnchor="middle" fill="#38bdf8" fontSize="8">Sortie RJ45 Cat6 → ether1 (WAN)</text>
 
-              {/* RJ45 Starlink -> MikroTik ether1 */}
-              <path d="M288 78 V112" fill="none" stroke="#3b82f6" strokeWidth="2.8" />
-              <text x="330" y="99" fill="#60a5fa" fontSize="8.5" fontWeight="bold">RJ45 Cat6 (WAN)</text>
+              {/* RJ45 Cat6 Bleu Starlink -> MikroTik */}
+              <path d="M291 74 V104" fill="none" stroke="#3b82f6" strokeWidth="3" />
+              <text x="342" y="92" fill="#60a5fa" fontSize="8" fontWeight="bold">RJ45 Cat6 (WAN)</text>
 
               {/* Routeur MikroTik Central */}
-              <rect x="176" y="112" width="234" height="96" rx="10" fill="#081c2e" stroke="#22d3ee" strokeWidth="2" />
-              <text x="293" y="132" textAnchor="middle" fill="#22d3ee" fontSize="11.5" fontWeight="bold">Routeur MikroTik (192.168.1.1)</text>
-              <text x="190" y="150" fill="#93c5fd" fontSize="9">• ether1 (WAN) : Reçoit Internet Starlink</text>
-              <text x="190" y="165" fill="#86efac" fontSize="9">• ether2 (LAN) : Câble RJ45 → PC GOZA (.100)</text>
-              <text x="190" y="180" fill="#67e8f9" fontSize="9">• Wi-Fi 2.4GHz GOZA-IoT : Sans isolation</text>
-              <text x="190" y="195" fill="#d8b4fe" fontSize="9">• Wi-Fi GOZA-Guest : VLAN isolé Clients</text>
+              <rect x="172" y="104" width="240" height="92" rx="10" fill="#081c2e" stroke="#22d3ee" strokeWidth="2" />
+              <text x="292" y="123" textAnchor="middle" fill="#22d3ee" fontSize="11" fontWeight="bold">Routeur MikroTik (192.168.1.1)</text>
+              <text x="184" y="139" fill="#93c5fd" fontSize="8.5">• ether1 : WAN Starlink (+ VPN WireGuard)</text>
+              <text x="184" y="153" fill="#60a5fa" fontSize="8.5">• ether2 : RJ45 Cat6 → PC GOZA (.100)</text>
+              <text x="184" y="167" fill="#38bdf8" fontSize="8.5">• ether3 : RJ45 Cat6 → Switch 16 Ports</text>
+              <text x="184" y="181" fill="#67e8f9" fontSize="8.5">• Wi-Fi 2.4GHz GOZA-IoT / VLAN Guest</text>
 
-              {/* Connexion ether2 vers PC GOZA & Imprimante */}
-              <path d="M240 208 V224 H136 V232" fill="none" stroke="#22c55e" strokeWidth="2.5" />
-              <rect x="14" y="216" width="234" height="52" rx="8" fill="#0f172a" stroke="#22c55e" strokeWidth="1.5" />
-              <text x="131" y="234" textAnchor="middle" fill="#86efac" fontSize="10" fontWeight="bold">PC GOZA (.100) → Imprimante 80mm → Tiroir</text>
-              <text x="131" y="249" textAnchor="middle" fill="#cbd5e1" fontSize="8.5">PC sur ether2 (RJ45) | Imprimante en USB/LAN | Tiroir RJ11</text>
+              {/* RJ45 ether2 -> PC GOZA & Imprimante USB/Tiroir RJ11 */}
+              <path d="M220 196 V222 H134 V230" fill="none" stroke="#3b82f6" strokeWidth="2.8" />
+              <rect x="12" y="218" width="234" height="68" rx="8" fill="#0f172a" stroke="#a855f7" strokeWidth="1.6" />
+              <text x="129" y="236" textAnchor="middle" fill="#86efac" fontSize="9.5" fontWeight="bold">PC Caisse GOZA (.100) + Imprimante 80mm</text>
+              <text x="129" y="252" textAnchor="middle" fill="#60a5fa" fontSize="8">Réseau : RJ45 Cat6 sur ether2 (Local 100%)</text>
+              <text x="129" y="266" textAnchor="middle" fill="#d8b4fe" fontSize="8">Imprimante : Câble USB/LAN | Tiroir : RJ11</text>
 
-              {/* Wi-Fi 2.4GHz vers tous les Shelly */}
-              <path d="M410 144 H466" fill="none" stroke="#22d3ee" strokeWidth="2.5" strokeDasharray="5 3" />
-              <rect x="466" y="86" width="180" height="114" rx="8" fill="#0c192c" stroke="#22d3ee" strokeWidth="1.5" />
-              <text x="556" y="106" textAnchor="middle" fill="#67e8f9" fontSize="10" fontWeight="bold">Wi-Fi 2.4GHz GOZA-IoT</text>
-              <text x="476" y="124" fill="#cbd5e1" fontSize="8.5">• 8× Shelly Postes (.122–.128, .130)</text>
-              <text x="476" y="140" fill="#fde047" fontSize="8.5">• Relais Lumières (.140)</text>
-              <text x="476" y="156" fill="#7dd3fc" fontSize="8.5">• Relais Clim 1 (.141) &amp; Clim 2 (.142)</text>
-              <text x="476" y="172" fill="#5eead4" fontSize="8.5">• Relais Extracteur (.143)</text>
-              <text x="476" y="188" fill="#d8b4fe" fontSize="8.5">• Tablette Gérant (Supervision LAN)</text>
+              {/* RJ45 ether3 -> Switch Gigabit 16 Ports -> 10 Consoles */}
+              <path d="M298 196 V222 H334 V230" fill="none" stroke="#3b82f6" strokeWidth="2.8" />
+              <rect x="260" y="218" width="186" height="68" rx="8" fill="#091a32" stroke="#3b82f6" strokeWidth="1.6" />
+              <text x="353" y="236" textAnchor="middle" fill="#93c5fd" fontSize="9.5" fontWeight="bold">Switch Gigabit 16 Ports (RJ45)</text>
+              <text x="353" y="252" textAnchor="middle" fill="#cbd5e1" fontSize="8">Câbles RJ45 Cat6 → 8 PS4 + 2 PS5</text>
+              <text x="353" y="266" textAnchor="middle" fill="#4ade80" fontSize="8">Latence zéro · MAJ jeux sans saturer Wi-Fi</text>
 
-              {/* VLAN Guest & Cloud */}
-              <path d="M410 186 H466 V236" fill="none" stroke="#c084fc" strokeWidth="2" strokeDasharray="4 3" />
-              <rect x="466" y="212" width="180" height="56" rx="8" fill="#1b102c" stroke="#a855f7" strokeWidth="1.4" />
-              <text x="556" y="232" textAnchor="middle" fill="#e9d5ff" fontSize="9.5" fontWeight="bold">VLAN Guest + Cloud Starlink</text>
-              <text x="556" y="247" textAnchor="middle" fill="#cbd5e1" fontSize="8">Joueurs (Portail QR) + WhatsApp Meta</text>
-              <text x="556" y="259" textAnchor="middle" fill="#fda4af" fontSize="8">Pare-feu : bloqué vers IP .100 à .150</text>
+              {/* Wi-Fi 2.4GHz vers Shelly & Capteur Temp */}
+              <path d="M412 138 H466" fill="none" stroke="#22d3ee" strokeWidth="2.4" strokeDasharray="5 3" />
+              <rect x="466" y="84" width="180" height="114" rx="8" fill="#0c192c" stroke="#22d3ee" strokeWidth="1.5" />
+              <text x="556" y="102" textAnchor="middle" fill="#67e8f9" fontSize="9.5" fontWeight="bold">Wi-Fi 2.4GHz GOZA-IoT</text>
+              <text x="476" y="118" fill="#cbd5e1" fontSize="8">• 8× Shelly Postes (.122–.128, .130)</text>
+              <text x="476" y="133" fill="#fde047" fontSize="8">• Relais Lumières (.140)</text>
+              <text x="476" y="148" fill="#7dd3fc" fontSize="8">• Clims (.141/.142) + Fan (.143)</text>
+              <text x="476" y="163" fill="#38bdf8" fontSize="8" fontWeight="bold">• Capteur Temp. H&amp;T/DS18B20 (.144)</text>
+              <text x="476" y="178" fill="#d8b4fe" fontSize="8">• Tablette Gérant (LAN local)</text>
+
+              {/* Local + Distance */}
+              <path d="M412 180 H466 V236" fill="none" stroke="#10b981" strokeWidth="2" strokeDasharray="4 3" />
+              <rect x="466" y="218" width="180" height="68" rx="8" fill="#08241d" stroke="#10b981" strokeWidth="1.4" />
+              <text x="556" y="236" textAnchor="middle" fill="#6ee7b7" fontSize="9.5" fontWeight="bold">Gestion Locale ET à Distance</text>
+              <text x="556" y="251" textAnchor="middle" fill="#cbd5e1" fontSize="8">Local : PC (.100) ↔ Shelly sans Internet</text>
+              <text x="556" y="265" textAnchor="middle" fill="#cbd5e1" fontSize="8">Distance : WireGuard VPN / Cloud 4G</text>
             </svg>
           </div>
           <p className="text-[11px] text-slate-400 leading-relaxed">
-            <strong className="text-cyan-300">Règle d&apos;or MikroTik :</strong> Le PC Caissier GOZA (<code>ether2</code>) et le Wi-Fi <code>GOZA-IoT</code> doivent être dans le <strong>même Bridge LAN</strong> (sans isolation client) avec <strong>DHCP Statique</strong> pour que chaque ordre ticket atteigne les Shelly instantanément, même si Starlink est coupé.
+            <strong className="text-cyan-300">Switch 16 Ports vs Wi-Fi + Gestion Locale &amp; Distance :</strong> Reliez les 10 consoles (8 PS4 + 2 PS5) par <strong>câble RJ45 Cat6 via le Switch Gigabit 16 Ports</strong> branché sur <code>ether3</code> (zéro lag, pas de saturation du Wi-Fi 2.4 GHz IoT des Shelly). En local tout fonctionne sans Internet ; à distance le Gérant pilote la salle via <strong>Cloud GOZA ou tunnel WireGuard intégré au MikroTik</strong>.
           </p>
         </div>
       </div>
@@ -463,12 +477,28 @@ export const WiringDiagramsSvg: React.FC<WiringDiagramsSvgProps> = ({
                 <td className="py-2 px-3 font-mono text-slate-300">Wi-Fi 2.4GHz GOZA-IoT (IP fixe 192.168.1.143)</td>
               </tr>
               <tr>
-                <td className="py-2 px-3 font-semibold text-emerald-300">Starlink + MikroTik + PC GOZA + Imprimante 80mm</td>
+                <td className="py-2 px-3 font-semibold text-sky-300">Capteur Température &amp; Humidité (Thermostat Clim)</td>
                 <td className="py-2 px-3 text-slate-300">
-                  Disj. 10A (Sortie Onduleur Hybride + Batterie 15–20 kWh) → Multiprise parafoudre secourue
+                  USB-C 5V permanent (ou piles) pour Shelly Plus H&amp;T · ou sur bornier Shelly Plus Add-On + sonde DS18B20
+                </td>
+                <td className="py-2 px-3 font-mono text-slate-300">Wi-Fi 2.4GHz GOZA-IoT (IP fixe 192.168.1.144) → Clims .141/.142</td>
+              </tr>
+              <tr>
+                <td className="py-2 px-3 font-semibold text-blue-300">Switch Gigabit 16 Ports (Consoles PS4/PS5)</td>
+                <td className="py-2 px-3 text-slate-300">
+                  Câble Courant 230V sur Multiprise Onduleur (Disj. 10A secouru Batterie 15–20 kWh)
                 </td>
                 <td className="py-2 px-3 font-mono text-slate-300">
-                  Starlink→ether1 · ether2→PC (.100) · USB/LAN→Imp. 80mm→RJ11 Tiroir
+                  Câble Réseau RJ45 Cat6 : MikroTik ether3 → Switch → 8 PS4 + 2 PS5
+                </td>
+              </tr>
+              <tr>
+                <td className="py-2 px-3 font-semibold text-emerald-300">Starlink + MikroTik + PC GOZA + Imprimante 80mm</td>
+                <td className="py-2 px-3 text-slate-300">
+                  Câble Courant 230V (Disj. 10A Onduleur Hybride + Batterie 15–20 kWh) → Multiprise parafoudre
+                </td>
+                <td className="py-2 px-3 font-mono text-slate-300">
+                  RJ45 Cat6 : Starlink→ether1, ether2→PC (.100) | Câble USB/LAN→Imp. 80mm | RJ11→Tiroir
                 </td>
               </tr>
             </tbody>

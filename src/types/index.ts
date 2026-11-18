@@ -236,14 +236,22 @@ export interface DomotiqueDevice {
   id: string;
   stationId?: number;
   name: string;
-  type: 'STATION_CONSOLE_TV' | 'AMBIENT_LIGHT' | 'AIR_CONDITIONER' | 'EXHAUST_FAN' | 'GENERAL_SWITCH';
+  type:
+    | 'STATION_CONSOLE_TV'
+    | 'AMBIENT_LIGHT'
+    | 'AIR_CONDITIONER'
+    | 'EXHAUST_FAN'
+    | 'TEMPERATURE_SENSOR'
+    | 'GENERAL_SWITCH';
   relayTopic: string;
   state: 'ON' | 'OFF';
   watts: number;
   totalKWh: number;
   isOnline: boolean;
-  hardwareType: 'SONOFF_S26' | 'SHELLY_1PM' | 'ESP32_CUSTOM' | 'TASMOTA';
+  hardwareType: 'SONOFF_S26' | 'SHELLY_1PM' | 'SHELLY_HT' | 'ESP32_CUSTOM' | 'TASMOTA';
   ipAddress: string;
+  temperatureC?: number;
+  humidityPercent?: number;
 }
 
 export interface CashShift {
@@ -389,6 +397,11 @@ export interface LightingACSchedule {
   acOffTime: string;
   lightOnTime: string;
   lightOffTime: string;
+  thermostatEnabled?: boolean;
+  acTargetOnTempC?: number;
+  acTargetOffTempC?: number;
+  currentRoomTempC?: number;
+  thermostatRespectSchedule?: boolean;
 }
 
 export interface SettingsHistoryEntry {

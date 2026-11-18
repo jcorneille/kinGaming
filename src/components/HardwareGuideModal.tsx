@@ -31,6 +31,9 @@ import {
   BatteryCharging,
   Lightbulb,
   Wind,
+  Thermometer,
+  Globe,
+  Cable,
   Loader2
 } from 'lucide-react';
 import { DomotiqueDevice, Station, SystemSettings } from '../types';
@@ -41,6 +44,7 @@ import gozaStarlinkMikrotikSchemaImg from '../assets/images/goza_starlink_mikrot
 import gozaCompleteDevicesImg from '../assets/images/goza_complete_devices_architecture_1794961841172.jpg';
 import gozaFullSystemBatterySchemaImg from '../assets/images/goza_full_system_battery_schema_1794962714394.jpg';
 import gozaWiringPinsSchemaImg from '../assets/images/goza_wiring_pins_connections_1794964188286.jpg';
+import gozaHardwareCatalogCablesImg from '../assets/images/goza_hardware_catalog_cables_1795006338003.jpg';
 
 interface HardwareGuideModalProps {
   settings?: SystemSettings;
@@ -56,12 +60,16 @@ export const HardwareGuideModal: React.FC<HardwareGuideModalProps> = ({
   const [activeSection, setActiveSection] = useState<
     'wiring' | 'devices_roles' | 'app_guide' | 'bom' | 'tasmota' | 'whatsapp' | 'cashier_guide' | 'test_plan'
   >('wiring');
-  const [schemaMode, setSchemaMode] = useState<'battery_full' | 'wiring_pins' | 'devices' | 'overview'>('battery_full');
+  const [schemaMode, setSchemaMode] = useState<
+    'hardware_cables' | 'battery_full' | 'wiring_pins' | 'devices' | 'overview'
+  >('hardware_cables');
   const [isSchemaZoomed, setIsSchemaZoomed] = useState(false);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
 
   const activeSchemaImg =
-    schemaMode === 'battery_full'
+    schemaMode === 'hardware_cables'
+      ? gozaHardwareCatalogCablesImg
+      : schemaMode === 'battery_full'
       ? gozaFullSystemBatterySchemaImg
       : schemaMode === 'wiring_pins'
       ? gozaWiringPinsSchemaImg
@@ -70,7 +78,9 @@ export const HardwareGuideModal: React.FC<HardwareGuideModalProps> = ({
       : gozaStarlinkMikrotikSchemaImg;
 
   const activeSchemaDownloadName =
-    schemaMode === 'battery_full'
+    schemaMode === 'hardware_cables'
+      ? 'catalogue-materiels-cables-differencies-goza.jpg'
+      : schemaMode === 'battery_full'
       ? 'schema-complet-goza-batterie-20kwh-clim-lumieres.jpg'
       : schemaMode === 'wiring_pins'
       ? 'schema-cablage-secteur-230v-routeur-goza.jpg'
@@ -189,7 +199,18 @@ export const HardwareGuideModal: React.FC<HardwareGuideModalProps> = ({
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2 shrink-0">
-              <div className="inline-flex bg-slate-950 border border-slate-700 rounded-lg p-0.5">
+              <div className="inline-flex flex-wrap bg-slate-950 border border-slate-700 rounded-lg p-0.5">
+                <button
+                  type="button"
+                  onClick={() => setSchemaMode('hardware_cables')}
+                  className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition cursor-pointer ${
+                    schemaMode === 'hardware_cables'
+                      ? 'bg-sky-600 text-white'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Matériel &amp; Câbles Différenciés
+                </button>
                 <button
                   type="button"
                   onClick={() => setSchemaMode('battery_full')}
@@ -355,7 +376,51 @@ export const HardwareGuideModal: React.FC<HardwareGuideModalProps> = ({
             </div>
           </div>
 
-          {/* Étape 5 : Cycle de fonctionnement complet */}
+          {/* Étape 5 : Réponses Clés d'Ingénierie (Thermostat Clim, Switch vs Wi-Fi, Pile Logicielle & Local/Distance) */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 text-xs">
+            <div className="bg-sky-950/25 border border-sky-500/30 rounded-xl p-4 space-y-2">
+              <h4 className="font-bold text-sky-300 text-sm flex items-center gap-2">
+                <Thermometer className="w-4 h-4 text-sky-400" />
+                <span>Thermostat Auto Clim (Détecteur de Température)</span>
+              </h4>
+              <p className="text-slate-300 leading-relaxed">
+                <strong>Oui, 100% possible :</strong> Ajoutez un <strong>Shelly Plus H&amp;T</strong> (ou un <strong>Shelly Plus Add-On + sonde DS18B20</strong> sur le Shelly de la Clim 1 à <code>192.168.1.144</code>).
+                Dans <em>Domotique IoT &gt; Automatisations</em>, réglez par exemple : <strong>Allumer les Clims dès 27°C</strong> et <strong>Couper automatiquement à 23.5°C</strong> (hystérésis anti-claquement). Plus besoin d&apos;allumer manuellement !
+              </p>
+            </div>
+
+            <div className="bg-blue-950/25 border border-blue-500/30 rounded-xl p-4 space-y-2">
+              <h4 className="font-bold text-blue-300 text-sm flex items-center gap-2">
+                <Network className="w-4 h-4 text-blue-400" />
+                <span>Switch Gigabit 16 Ports vs Wi-Fi pour les Consoles</span>
+              </h4>
+              <p className="text-slate-300 leading-relaxed">
+                <strong>Switch RJ45 Cat6 vivement conseillé :</strong> Reliez un <strong>Switch Gigabit 16 Ports</strong> sur le port <code>ether3</code> du MikroTik pour câbler les 8 PS4 + 2 PS5 en Ethernet Cat6. Pourquoi ? Zéro latence en jeu en ligne, téléchargements rapides sans jamais saturer le <strong>Wi-Fi 2.4 GHz</strong> réservé aux relais Shelly.
+              </p>
+            </div>
+
+            <div className="bg-emerald-950/25 border border-emerald-500/30 rounded-xl p-4 space-y-2">
+              <h4 className="font-bold text-emerald-300 text-sm flex items-center gap-2">
+                <Cpu className="w-4 h-4 text-emerald-400" />
+                <span>Raspberry Pi 5, Mosquitto, Node-RED, PostgreSQL, Grafana : Indispensables ?</span>
+              </h4>
+              <p className="text-slate-300 leading-relaxed">
+                <strong>NON, on peut SAUTER Node-RED, Grafana et Mosquitto séparé !</strong> L&apos;application <strong>GOZA (Node.js)</strong> intègre déjà le pilotage direct des Shelly par HTTP local, le thermostat, les horaires automatiques et les rapports Excel/PDF. Le <strong>Raspberry Pi 5</strong> reste optionnel (uniquement si vous voulez piloter les relais quand le PC Caisse est éteint).
+              </p>
+            </div>
+
+            <div className="bg-purple-950/25 border border-purple-500/30 rounded-xl p-4 space-y-2">
+              <h4 className="font-bold text-purple-300 text-sm flex items-center gap-2">
+                <Globe className="w-4 h-4 text-purple-400" />
+                <span>Gestion en Local ET à Distance (Starlink + MikroTik)</span>
+              </h4>
+              <p className="text-slate-300 leading-relaxed">
+                <strong>En Local (même sans Internet) :</strong> Le PC Caisse (<code>.100</code>) parle aux Shelly (<code>.121–.144</code>), à l&apos;imprimante 80mm et aux consoles via le MikroTik. <strong>À Distance :</strong> Le Gérant/Admin consulte les recettes, l&apos;état des postes et commande les clims/relais via l&apos;app Cloud GOZA ou un <strong>tunnel VPN WireGuard</strong> intégré dans le MikroTik.
+              </p>
+            </div>
+          </div>
+
+          {/* Étape 6 : Cycle de fonctionnement complet */}
           <div className="bg-emerald-950/25 border border-emerald-500/30 rounded-xl p-4 space-y-2 text-xs">
             <h4 className="font-bold text-emerald-300 text-sm flex items-center gap-2">
               <ShieldCheck className="w-4 h-4 text-emerald-400" />
@@ -565,8 +630,44 @@ export const HardwareGuideModal: React.FC<HardwareGuideModalProps> = ({
                   <td className="py-3 px-3 font-mono text-slate-300">192.168.1.143 · Sonoff S26 · gaminghub/climate/fan (~110W)</td>
                   <td className="py-3 px-3 text-slate-300"><strong className="text-teal-300">RENOUVELLEMENT D&apos;AIR :</strong> Évacue la chaleur dégagée par les 10 consoles/TV à très faible consommation (110W), assurant le refroidissement même quand les clims sont délestées.</td>
                 </tr>
+                <tr>
+                  <td className="py-3 px-3 font-semibold text-sky-300">12. Capteur Température &amp; Humidité (Shelly Plus H&amp;T / DS18B20)</td>
+                  <td className="py-3 px-3 font-mono text-slate-300">192.168.1.144 · Wi-Fi 2.4GHz · gaminghub/climate/temperature (~1.5W)</td>
+                  <td className="py-3 px-3 text-slate-300"><strong className="text-sky-300">THERMOSTAT AUTOMATIQUE :</strong> Mesure la température ambiante en continu : allume les 2 climatiseurs dès qu&apos;il fait chaud (&ge; 27°C) et les coupe dès qu&apos;il fait frais (&le; 23.5°C).</td>
+                </tr>
+                <tr>
+                  <td className="py-3 px-3 font-semibold text-blue-300">13. Switch Gigabit 16 Ports RJ45</td>
+                  <td className="py-3 px-3 font-mono text-slate-300">Port ether3 MikroTik → Câbles RJ45 Cat6 vers 8 PS4 + 2 PS5</td>
+                  <td className="py-3 px-3 text-slate-300"><strong className="text-blue-300">RÉSEAU FILAIRE CONSOLES :</strong> Distribue Internet/LAN en gigabit aux 10 consoles sans saturer le Wi-Fi 2.4 GHz utilisé par les relais Shelly et la caisse.</td>
+                </tr>
               </tbody>
             </table>
+          </div>
+
+          {/* Tableau Différenciation des 4 Types de Câbles */}
+          <div className="space-y-2">
+            <h4 className="font-bold text-white text-sm flex items-center gap-2">
+              <Cable className="w-4 h-4 text-amber-400" />
+              <span>Différenciation Exacte des Câbles dans l&apos;Installation (Ne Pas Confondre)</span>
+            </h4>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+              <div className="bg-slate-950/70 border border-rose-500/30 rounded-xl p-3 space-y-1">
+                <div className="font-bold text-rose-300">1. Câble Courant 230V (Électrique)</div>
+                <p className="text-slate-300">Section <strong>2.5mm²</strong> (prises postes/TV/caisse) &amp; <strong>4mm²</strong> (clims/onduleur). Fils Rouge/Marron (Phase L), Bleu (Neutre N), Vert/Jaune (Terre PE).</p>
+              </div>
+              <div className="bg-slate-950/70 border border-blue-500/30 rounded-xl p-3 space-y-1">
+                <div className="font-bold text-blue-300">2. Câble Réseau RJ45 Cat6 (Ethernet)</div>
+                <p className="text-slate-300">Transport des données IP uniquement (pas de 230V) : Starlink → MikroTik <code>ether1</code> ; <code>ether2</code> → PC GOZA ; <code>ether3</code> → Switch 16p → 10 Consoles.</p>
+              </div>
+              <div className="bg-slate-950/70 border border-purple-500/30 rounded-xl p-3 space-y-1">
+                <div className="font-bold text-purple-300">3. Câble Imprimante USB/LAN + Tiroir RJ11</div>
+                <p className="text-slate-300"><strong>USB Type-B (ou RJ45 LAN)</strong> entre le PC Caisse et l&apos;imprimante thermique 80mm ; cordon <strong>RJ11</strong> (prise téléphone) de l&apos;imprimante vers le tiroir-caisse.</p>
+              </div>
+              <div className="bg-slate-950/70 border border-cyan-500/30 rounded-xl p-3 space-y-1">
+                <div className="font-bold text-cyan-300">4. Sans-Fil Wi-Fi 2.4 GHz IoT</div>
+                <p className="text-slate-300">Aucun câble réseau jusqu&apos;aux Shelly : les relais (<code>.122–.143</code>) et le Capteur Température (<code>.144</code>) communiquent en Wi-Fi 2.4 GHz sur le SSID <code>GOZA-IoT</code>.</p>
+              </div>
+            </div>
           </div>
 
           {/* Tableau complet individuel des 10 Postes PS4 & PS5 présents dans le système */}
@@ -817,16 +918,40 @@ export const HardwareGuideModal: React.FC<HardwareGuideModalProps> = ({
                   <td className="py-2.5 px-3 text-right text-slate-400">369 600 FC</td>
                 </tr>
                 <tr>
-                  <td className="py-2.5 px-3 font-sans font-medium text-white">Passerelle &amp; Broker MQTT Local</td>
-                  <td className="py-2.5 px-3 text-cyan-400">PC Caissier GOZA / Mini PC</td>
+                  <td className="py-2.5 px-3 font-sans font-medium text-white">Détecteur Température &amp; Humidité (Thermostat Clim)</td>
+                  <td className="py-2.5 px-3 text-sky-400">Shelly Plus H&amp;T (ou Shelly Add-On + sonde DS18B20)</td>
                   <td className="py-2.5 px-3 text-center">1</td>
-                  <td className="py-2.5 px-3 text-right">$85.00</td>
-                  <td className="py-2.5 px-3 text-right font-bold text-emerald-400">$85.00</td>
-                  <td className="py-2.5 px-3 text-right text-slate-400">238 000 FC</td>
+                  <td className="py-2.5 px-3 text-right">$28.00</td>
+                  <td className="py-2.5 px-3 text-right font-bold text-emerald-400">$28.00</td>
+                  <td className="py-2.5 px-3 text-right text-slate-400">78 400 FC</td>
+                </tr>
+                <tr>
+                  <td className="py-2.5 px-3 font-sans font-medium text-white">Switch Réseau Gigabit 16 Ports (Consoles PS4/PS5)</td>
+                  <td className="py-2.5 px-3 text-blue-400">TP-Link TL-SG1016D / MikroTik CSS326 (16 ports RJ45)</td>
+                  <td className="py-2.5 px-3 text-center">1</td>
+                  <td className="py-2.5 px-3 text-right">$65.00</td>
+                  <td className="py-2.5 px-3 text-right font-bold text-emerald-400">$65.00</td>
+                  <td className="py-2.5 px-3 text-right text-slate-400">182 000 FC</td>
+                </tr>
+                <tr>
+                  <td className="py-2.5 px-3 font-sans font-medium text-white">Câblage Différencié (Courant 230V, RJ45 Cat6, USB/RJ11)</td>
+                  <td className="py-2.5 px-3 text-amber-300">Bobine Cat6 + Câble 2.5/4mm² + Cordons USB/RJ11</td>
+                  <td className="py-2.5 px-3 text-center">Lot complet</td>
+                  <td className="py-2.5 px-3 text-right">$75.00</td>
+                  <td className="py-2.5 px-3 text-right font-bold text-emerald-400">$75.00</td>
+                  <td className="py-2.5 px-3 text-right text-slate-400">210 000 FC</td>
+                </tr>
+                <tr>
+                  <td className="py-2.5 px-3 font-sans font-medium text-white">Passerelle Serveur Local (PC Caissier GOZA)</td>
+                  <td className="py-2.5 px-3 text-cyan-400">PC Caissier GOZA (RPi5/Node-RED/Grafana non requis)</td>
+                  <td className="py-2.5 px-3 text-center">1</td>
+                  <td className="py-2.5 px-3 text-right">Déjà inclus</td>
+                  <td className="py-2.5 px-3 text-right font-bold text-emerald-400">$0.00</td>
+                  <td className="py-2.5 px-3 text-right text-slate-400">0 FC</td>
                 </tr>
                 <tr>
                   <td className="py-2.5 px-3 font-sans font-medium text-white">Routeur Réseau Principal &amp; Wi-Fi IoT</td>
-                  <td className="py-2.5 px-3 text-cyan-400">MikroTik hAP ax² / RB4011</td>
+                  <td className="py-2.5 px-3 text-cyan-400">MikroTik hAP ax² / hEX + WireGuard VPN</td>
                   <td className="py-2.5 px-3 text-center">1</td>
                   <td className="py-2.5 px-3 text-right">$110.00</td>
                   <td className="py-2.5 px-3 text-right font-bold text-emerald-400">$110.00</td>

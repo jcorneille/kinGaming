@@ -641,27 +641,40 @@ export default function App() {
     return () => clearInterval(waInterval);
   }, []);
 
-  // Évaluateur automatique des horaires d'éclairage & climatisation
+  // Évaluateur automatique des horaires d'éclairage, climatisation & thermostat (hystérésis)
   const evaluateLightingACSchedule = (
     devices: DomotiqueDevice[],
     settings: SystemSettings,
     force = false
   ): { changed: boolean; nextDevices: DomotiqueDevice[]; summaryDetails: string[] } => {
     const sched = settings.lightingACSchedule;
-    if (!sched || !sched.enabled) {
+    if (!sched) {
       return { changed: false, nextDevices: devices, summaryDetails: [] };
     }
 
     const now = new Date();
     const nowMinutes = now.getHours() * 60 + now.getMinutes();
-    const shouldLightOn = isTimeWithinSlot(nowMinutes, sched.lightOnTime, sched.lightOffTime);
-    const shouldAcOn = isTimeWithinSlot(nowMinutes, sched.acOnTime, sched.acOffTime);
+    const shouldLightOn = sched.enabled ? isTimeWithinSlot(nowMinutes, sched.lightOnTime, sched.lightOffTime) : null;
+    const isWithinAcWindow = isTimeWithinSlot(nowMinutes, sched.acOnTime, sched.acOffTime);
+
+    const thermostatOn = Boolean(sched.thermostatEnabled);
+    const roomTemp = typeof sched.currentRoomTempC === 'number' ? sched.currentRoomTempC : 26.5;
+    const tempOnThreshold = typeof sched.acTargetOnTempC === 'number' ? sched.acTargetOnTempC : 27;
+    const tempOffThreshold = typeof sched.acTargetOffTempC === 'number' ? sched.acTargetOffTempC : 23.5;
+    const respectSchedule = sched.thermostatRespectSchedule !== false;
 
     let changed = false;
     const summaryDetails: string[] = [];
 
     const nextDevices = devices.map((d) => {
-      if (d.type === 'AMBIENT_LIGHT') {
+      if (d.type === 'TEMPERATURE_SENSOR') {
+        if (d.temperatureC !== roomTemp) {
+          return { ...d, temperatureC: roomTemp };
+        }
+        return d;
+      }
+
+      if (d.type === 'AMBIENT_LIGHT' && shouldLightOn !== null) {
         const targetState: 'ON' | 'OFF' = shouldLightOn ? 'ON' : 'OFF';
         if (d.state !== targetState || force) {
           if (d.state !== targetState) {
@@ -669,10 +682,66 @@ export default function App() {
             summaryDetails.push(`${d.name} → ${targetState}`);
           }
           mqttGateway.publish(`${d.relayTopic}/set`, targetState);
+          if (d.ipAddress) {
+            void fetch('/api/shelly/trigger', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                stationId: 0,
+                state: targetState,
+                ipAddress: d.ipAddress,
+                hardwareType: d.hardwareType,
+                reason: 'AUTO_SCHEDULE_LIGHT',
+              }),
+            }).catch(() => {});
+          }
           return { ...d, state: targetState, watts: targetState === 'ON' ? 85 : 0 };
         }
-      } else if (d.type === 'AIR_CONDITIONER' || d.type === 'EXHAUST_FAN') {
-        const targetState: 'ON' | 'OFF' = shouldAcOn ? 'ON' : 'OFF';
+      } else if (d.type === 'AIR_CONDITIONER') {
+        let targetState: 'ON' | 'OFF' | null = null;
+
+        if (thermostatOn) {
+          if (respectSchedule && sched.enabled && !isWithinAcWindow) {
+            targetState = 'OFF';
+          } else if (roomTemp >= tempOnThreshold) {
+            targetState = 'ON';
+          } else if (roomTemp <= tempOffThreshold) {
+            targetState = 'OFF';
+          } else if (force && sched.enabled) {
+            targetState = isWithinAcWindow ? d.state : 'OFF';
+          }
+        } else if (sched.enabled) {
+          targetState = isWithinAcWindow ? 'ON' : 'OFF';
+        }
+
+        if (targetState !== null && (d.state !== targetState || force)) {
+          if (d.state !== targetState) {
+            changed = true;
+            const reasonTag = thermostatOn ? ` (${roomTemp.toFixed(1)}°C)` : '';
+            summaryDetails.push(`${d.name} → ${targetState}${reasonTag}`);
+          }
+          mqttGateway.publish(`${d.relayTopic}/set`, targetState);
+          if (d.ipAddress) {
+            void fetch('/api/shelly/trigger', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                stationId: 0,
+                state: targetState,
+                ipAddress: d.ipAddress,
+                hardwareType: d.hardwareType,
+                reason: thermostatOn ? 'AUTO_THERMOSTAT_AC' : 'AUTO_SCHEDULE_AC',
+              }),
+            }).catch(() => {});
+          }
+          return {
+            ...d,
+            state: targetState,
+            watts: targetState === 'ON' ? (d.id === 'dev-ac-ps4' ? 1250 : 1450) : 0,
+          };
+        }
+      } else if (d.type === 'EXHAUST_FAN' && sched.enabled) {
+        const targetState: 'ON' | 'OFF' = isWithinAcWindow ? 'ON' : 'OFF';
         if (d.state !== targetState || force) {
           if (d.state !== targetState) {
             changed = true;
@@ -682,7 +751,7 @@ export default function App() {
           return {
             ...d,
             state: targetState,
-            watts: targetState === 'ON' ? (d.type === 'AIR_CONDITIONER' ? 1350 : 95) : 0,
+            watts: targetState === 'ON' ? 110 : 0,
           };
         }
       }
@@ -704,8 +773,8 @@ export default function App() {
         action: 'SYNCHRONISATION_HORAIRE_DOMOTIQUE',
         details:
           summaryDetails.length > 0
-            ? `Application horaire éclairage/clim (${now.toTimeString().slice(0, 5)}) : ${summaryDetails.join(', ')}`
-            : `Vérification horaire éclairage/clim (${now.toTimeString().slice(0, 5)}) appliquée sur tous les équipements auxiliaires`,
+            ? `Application horaire/thermostat (${now.toTimeString().slice(0, 5)}) : ${summaryDetails.join(', ')}`
+            : `Vérification horaire & thermostat (${now.toTimeString().slice(0, 5)}) appliquée sur tous les équipements auxiliaires`,
       };
       return {
         ...prev,
@@ -989,11 +1058,14 @@ export default function App() {
           });
         }
 
-        // 4. Vérification horaire automatique Éclairage & Climatisation (1x par minute)
+        // 4. Vérification horaire & thermostat automatique Éclairage & Climatisation (1x par minute)
         let updatedDomotiqueDevices = prev.domotiqueDevices;
         const currentDate = new Date(nowMs);
         const currentHHMM = `${String(currentDate.getHours()).padStart(2, '0')}:${String(currentDate.getMinutes()).padStart(2, '0')}`;
-        if (updatedSettings.lightingACSchedule?.enabled && lastScheduleMinuteRef.current !== currentHHMM) {
+        if (
+          (updatedSettings.lightingACSchedule?.enabled || updatedSettings.lightingACSchedule?.thermostatEnabled) &&
+          lastScheduleMinuteRef.current !== currentHHMM
+        ) {
           lastScheduleMinuteRef.current = currentHHMM;
           const schedEval = evaluateLightingACSchedule(prev.domotiqueDevices, updatedSettings, false);
           if (schedEval.changed) {
@@ -1004,9 +1076,9 @@ export default function App() {
                 id: 'aud-dom-auto-' + nowMs,
                 timestamp: nowMs,
                 userRole: 'SYSTEM',
-                cashierName: 'Automate Horaires',
+                cashierName: 'Automate Climat & Horaires',
                 action: 'AUTOMATION_ECLAIRAGE_CLIM',
-                details: `Bascule horaire (${currentHHMM}) : ${schedEval.summaryDetails.join(', ')}`,
+                details: `Bascule auto (${currentHHMM}) : ${schedEval.summaryDetails.join(', ')}`,
               },
               ...newAuditLogs,
             ];
@@ -1957,7 +2029,9 @@ export default function App() {
             : d.type === 'AMBIENT_LIGHT'
             ? 85
             : d.type === 'AIR_CONDITIONER'
-            ? 1350
+            ? d.id === 'dev-ac-ps4' ? 1250 : 1450
+            : d.type === 'TEMPERATURE_SENSOR'
+            ? 1.5
             : 110;
           return {
             ...d,
@@ -3159,14 +3233,21 @@ export default function App() {
           };
         });
 
+        const nextSettingsObj: SystemSettings = {
+          ...updatedSettings,
+          rateLastUpdatedAt: rateChanged ? Date.now() : prev.settings.rateLastUpdatedAt,
+        };
+        const domEval =
+          historyEntry.section === 'domotique' || historyEntry.section === 'overview'
+            ? evaluateLightingACSchedule(prev.domotiqueDevices, nextSettingsObj, false)
+            : { changed: false, nextDevices: prev.domotiqueDevices, summaryDetails: [] };
+
         return {
           ...prev,
           stations: updatedStations,
           pricingPlans: updatedPlans,
-          settings: {
-            ...updatedSettings,
-            rateLastUpdatedAt: rateChanged ? Date.now() : prev.settings.rateLastUpdatedAt,
-          },
+          domotiqueDevices: domEval.nextDevices,
+          settings: nextSettingsObj,
           settingsHistory: [newHistEntry, ...(prev.settingsHistory || [])],
           auditLogs: [
             {
@@ -3175,7 +3256,9 @@ export default function App() {
               userRole: prev.currentRole,
               cashierName: prev.currentUser,
               action: 'MODIFICATION_REGLAGES',
-              details: `Section ${historyEntry.section} modifiée par ${prev.currentUser} ${historyEntry.reason ? `(Motif: ${historyEntry.reason})` : ''}`,
+              details: `Section ${historyEntry.section} modifiée par ${prev.currentUser}${
+                domEval.summaryDetails.length > 0 ? ` · Thermostat/Horaires: ${domEval.summaryDetails.join(', ')}` : ''
+              } ${historyEntry.reason ? `(Motif: ${historyEntry.reason})` : ''}`,
             },
             ...prev.auditLogs,
           ],
@@ -3989,6 +4072,19 @@ export default function App() {
                 });
               } else {
                 mqttGateway.publish(dev.relayTopic + '/set', nextState);
+                if (dev.ipAddress && dev.type !== 'TEMPERATURE_SENSOR') {
+                  void fetch('/api/shelly/trigger', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      stationId: 0,
+                      state: nextState,
+                      ipAddress: dev.ipAddress,
+                      hardwareType: dev.hardwareType,
+                      reason: 'DOMOTIQUE_AUX_TOGGLE',
+                    }),
+                  }).catch(() => {});
+                }
               }
 
               setAppState(prev => ({
@@ -4008,7 +4104,18 @@ export default function App() {
                 domotiqueDevices: prev.domotiqueDevices.map((d) => {
                   if (d.id !== deviceId) return d;
                   const linkedSt = d.stationId ? prev.stations.find((s) => s.id === d.stationId) : undefined;
-                  const watts = nextState === 'ON' ? (linkedSt ? getConsoleWatts(linkedSt.type) : 80) : 0;
+                  const watts =
+                    nextState === 'ON'
+                      ? linkedSt
+                        ? getConsoleWatts(linkedSt.type)
+                        : d.type === 'AMBIENT_LIGHT'
+                        ? 85
+                        : d.type === 'AIR_CONDITIONER'
+                        ? d.id === 'dev-ac-ps4' ? 1250 : 1450
+                        : d.type === 'TEMPERATURE_SENSOR'
+                        ? 1.5
+                        : 110
+                      : 0;
                   return { ...d, state: nextState, watts };
                 }),
               }));
@@ -4016,10 +4123,35 @@ export default function App() {
             onMasterPowerOff={handleMasterPowerOff}
             onMasterPowerOn={handleMasterPowerOn}
             onUpdateSettings={(newSettings) => {
-              setAppState(prev => ({
-                ...prev,
-                settings: { ...prev.settings, ...newSettings },
-              }));
+              setAppState(prev => {
+                const nextSettings = { ...prev.settings, ...newSettings };
+                if (newSettings.lightingACSchedule) {
+                  const evalResult = evaluateLightingACSchedule(prev.domotiqueDevices, nextSettings, false);
+                  return {
+                    ...prev,
+                    settings: nextSettings,
+                    domotiqueDevices: evalResult.nextDevices,
+                    auditLogs:
+                      evalResult.summaryDetails.length > 0
+                        ? [
+                            {
+                              id: 'aud-thermo-' + Date.now(),
+                              timestamp: Date.now(),
+                              userRole: prev.currentRole,
+                              cashierName: prev.currentUser || 'Thermostat Auto',
+                              action: 'THERMOSTAT_CLIM_AUTO',
+                              details: `Thermostat (${(nextSettings.lightingACSchedule.currentRoomTempC ?? 26.5).toFixed(1)}°C) : ${evalResult.summaryDetails.join(', ')}`,
+                            },
+                            ...prev.auditLogs,
+                          ]
+                        : prev.auditLogs,
+                  };
+                }
+                return {
+                  ...prev,
+                  settings: nextSettings,
+                };
+              });
             }}
             onApplyScheduleNow={applyLightingScheduleNow}
           />

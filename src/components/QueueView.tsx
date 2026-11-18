@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import { QueueEntry, Station, QueuePriority, StationType } from '../types';
 import { soundService } from '../services/soundService';
-import { getConsoleLabel } from '../services/consoleCatalog';
+import { CONSOLE_CATALOG, getConsoleLabel } from '../services/consoleCatalog';
 
 interface QueueViewProps {
   queue: QueueEntry[];
@@ -179,7 +179,7 @@ export const QueueView: React.FC<QueueViewProps> = ({
                 className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500"
               >
                 <option value="ANY">Peu importe (Premier libre)</option>
-                {Array.from(new Set(['PS4', 'PS5', ...stations.map((s) => s.type)])).map((tp) => (
+                {Array.from(new Set([...CONSOLE_CATALOG.map((c) => c.code), ...stations.map((s) => s.type)])).map((tp) => (
                   <option key={tp} value={tp}>
                     {getConsoleLabel(tp)}
                   </option>

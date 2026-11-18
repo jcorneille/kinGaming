@@ -148,28 +148,28 @@ export async function downloadFullWebAppGuidePdf({
     body: [
       [
         '1. Starlink -> MikroTik WAN',
-        'Routeur Starlink en Mode Bypass -> RJ45 Cat6 sur port ether1 (WAN) du MikroTik (DHCP Client + NAT Masquerade).',
-        'Evite le Double NAT et rend Starlink transparent : le MikroTik gere 100% du reseau et du pare-feu.',
+        'Routeur Starlink en Mode Bypass -> Cable Reseau RJ45 Cat6 sur port ether1 (WAN) du MikroTik (DHCP Client + NAT).',
+        'Evite le Double NAT : Starlink donne Internet + acces Cloud/VPN WireGuard a distance.',
       ],
       [
-        '2. Bridge LAN & PC Caissier',
-        'Bridge LAN 192.168.1.1/24 (ou 192.168.88.1/24). PC GOZA cable en RJ45 Gigabit sur ether2 avec IP fixe .100.',
-        'Garantit une communication instantanee (0 ms) entre le serveur GOZA, l\'imprimante et tous les relais.',
+        '2. Bridge LAN & Switch 16 Ports',
+        'PC GOZA en RJ45 Cat6 sur ether2 (.100). Switch Gigabit 16 Ports sur ether3 -> 8 PS4 + 2 PS5 en RJ45 Cat6.',
+        'Garantit 0 ms de latence sur la caisse et les consoles sans saturer le Wi-Fi des relais Shelly.',
       ],
       [
         '3. Wi-Fi 2.4 GHz IoT (GOZA-IoT)',
-        'Radio 2.4 GHz uniquement (20 MHz, canal 1/6/11), meme Bridge LAN, Option Client Isolation DESACTIVEE.',
-        'Les relais Shelly/Sonoff/Tasmota ne supportent que le 2.4 GHz et doivent repondre au PC Caissier.',
+        'Radio 2.4 GHz uniquement (20 MHz, canal 1/6/11), meme Bridge LAN, Client Isolation DESACTIVEE.',
+        'Relie tous les Shelly (.121-.143) + Capteur Temperature (.144) au PC Caissier meme sans Internet.',
       ],
       [
         '4. Baux DHCP Statiques',
-        'IP > DHCP Server > Leases > Make Static pour .100 (PC), .121-.130 (Postes), .140-.143 (Lumieres, Clim, Fan).',
-        'Empeche qu\'un relais change d\'adresse IP apres une coupure et perde le pilotage automatique GOZA.',
+        'IP > DHCP Server > Leases > Make Static pour .100 (PC), .121-.130 (Postes), .140-.144 (Lumieres, Clims, Fan, Sonde).',
+        'Empeche qu\'un relais ou le capteur change d\'IP apres une coupure SNEL.',
       ],
       [
-        '5. Wi-Fi Clients (GOZA-Guest)',
-        'SSID separe sur VLAN / sous-reseau invite (ex. 192.168.50.0/24) + regle Firewall bloquant 192.168.1.0/24.',
-        'Empeche les telephones des joueurs de scanner ou pirater les prises Shelly ou la caisse.',
+        '5. Local + A Distance (WireGuard/Cloud)',
+        'Local : 100% autonome via MikroTik. Distance : Portails Cloud GOZA ou tunnel WireGuard integre au MikroTik.',
+        'Le Gerant supervise recettes, postes et climatisation aussi bien sur place que depuis l\'exterieur.',
       ],
     ],
     theme: 'striped',
@@ -249,7 +249,9 @@ export async function downloadFullWebAppGuidePdf({
           d.type === 'AMBIENT_LIGHT'
             ? 'IMPORTANT : Ambiance visuelle & securite de la salle. S\'allume/eteint automatiquement selon les horaires (ex: 08h30-23h45).'
             : d.type === 'AIR_CONDITIONER'
-            ? 'IMPORTANT : Confort thermique des joueurs (evite surchauffe PS4/PS5). Pilote via contacteur 25A + delestage sur batterie 15-20 kWh.'
+            ? 'IMPORTANT : Confort thermique (evite surchauffe PS4/PS5). Pilote via contacteur 25A + Thermostat auto (.144) + delestage batterie.'
+            : d.type === 'TEMPERATURE_SENSOR'
+            ? 'IMPORTANT : Detecteur de temperature (Shelly Plus H&T / DS18B20). Enclenche les clims >= 27 C et coupe <= 23.5 C sans intervention.'
             : 'IMPORTANT : Evacue la chaleur des consoles et renouvelle l\'air de la salle en continu (~110W sur batterie).',
         ])
       : [
@@ -269,13 +271,19 @@ export async function downloadFullWebAppGuidePdf({
             'Climatiseur Zone PS4',
             'SHELLY_1PM + Contacteur 25A (192.168.1.142)',
             'gaminghub/climate/ac2',
-            'IMPORTANT : Maintient la zone PS4 au frais (~1250W). Coupure auto a la fermeture ou en cas de coupure SNEL prolongee.',
+            'IMPORTANT : Maintient la zone PS4 au frais (~1250W). Coupure auto a la fermeture ou par thermostat.',
           ],
           [
             'Extracteur d\'air & Ventilation',
             'SONOFF_S26 (192.168.1.143)',
             'gaminghub/climate/fan',
             'IMPORTANT : Extraction continue de l\'air chaud degage par les TV et consoles (~110W), surtout quand la clim est delestee.',
+          ],
+          [
+            'Capteur Temperature Salle (Thermostat Auto Clim)',
+            'SHELLY_HT / DS18B20 (192.168.1.144)',
+            'gaminghub/climate/temperature',
+            'IMPORTANT : Detecte la chaleur en direct : allume la clim des 27 C et l\'arrete des 23.5 C automatiquement.',
           ],
         ];
 
@@ -308,10 +316,16 @@ export async function downloadFullWebAppGuidePdf({
         'CRITIQUE : Cerveau logiciel : billetterie <15s, timers temps reel, caisse CDF/USD, fidelite et ordres Shelly.',
       ],
       [
+        'Switch Gigabit 16 Ports RJ45',
+        'ether3 MikroTik -> 10 Consoles (Cat6)',
+        'LAN Filaire Consoles',
+        'IMPORTANT : Cable les 8 PS4 + 2 PS5 en RJ45 sans saturer le Wi-Fi 2.4GHz IoT des Shelly.',
+      ],
+      [
         'Imprimante Thermique 80mm + Tiroir-Caisse',
-        'USB / RJ45 sur PC GOZA (Secouru)',
+        'Cable USB/LAN sur PC + RJ11 Tiroir',
         'Impression ESC/POS',
-        'IMPORTANT : Edite les tickets joueurs avec QR Code anti-fraude et les recus snacks.',
+        'IMPORTANT : Edite les tickets joueurs avec QR Code anti-fraude et ouvre le tiroir especes.',
       ],
       ...stationRows,
       ...ambientRows,
@@ -366,9 +380,14 @@ export async function downloadFullWebAppGuidePdf({
         'Relais en Wi-Fi 2.4GHz GOZA-IoT (.140 et .143) pilotes selon planning ou bouton Domotique GOZA.',
       ],
       [
+        'Capteur Temperature (.144) & Switch 16 Ports',
+        'Capteur sur USB-C 5V (ou Add-On sur Shelly Clim). Switch sur Multiprise Onduleur 230V (Disj. 10A).',
+        'Capteur en Wi-Fi 2.4GHz (.144) -> Thermostat GOZA. Switch en RJ45 Cat6 (ether3 -> 8 PS4 + 2 PS5).',
+      ],
+      [
         'Starlink + MikroTik + PC GOZA + Imprimante 80mm',
-        'Disj. 10A (Sortie secourue Onduleur) -> Multiprise parafoudre alimentant blocs alim Starlink, MikroTik, PC Caissier et Imprimante 80mm.',
-        'Starlink RJ45 -> MikroTik ether1 (WAN) ; MikroTik ether2 -> RJ45 PC GOZA (.100) ; PC USB/LAN -> Imp. 80mm -> RJ11 Tiroir-caisse.',
+        'Cables Courant 230V (Disj. 10A Onduleur + Batterie 15-20 kWh) -> Multiprise parafoudre.',
+        'Cables RJ45 Cat6 (Starlink->ether1, ether2->PC .100) | Cable USB/LAN (Imprimante 80mm) | Cable RJ11 (Tiroir).',
       ],
     ],
     theme: 'grid',
@@ -378,6 +397,42 @@ export async function downloadFullWebAppGuidePdf({
       0: { cellWidth: 42 },
       1: { cellWidth: 82 },
       2: { cellWidth: 58 },
+    },
+  });
+
+  const afterWiringY = (doc as unknown as { lastAutoTable?: { finalY?: number } }).lastAutoTable?.finalY ?? 190;
+  doc.setFontSize(11);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(15, 23, 42);
+  doc.text('3C. Differenciation des Cables & Architecture Simplifiee (Local + Distance)', 14, afterWiringY + 8);
+
+  autoTable(doc, {
+    startY: afterWiringY + 11,
+    head: [['Sujet Technique', 'Decision & Materiel Recommande']],
+    body: [
+      [
+        'Differenciation des 4 Cables',
+        '1) Courant 230V (2.5mm2/4mm2 L/N/PE) pour prises, TV, consoles, clims | 2) Reseau RJ45 Cat6 (Starlink, MikroTik, Switch 16p, Consoles, PC) | 3) Imprimante USB/LAN + Tiroir RJ11 | 4) Wi-Fi 2.4GHz IoT pour Shelly & Capteur Temp.',
+      ],
+      [
+        'Switch vs Wi-Fi Consoles',
+        'Switch Gigabit 16 Ports en RJ45 Cat6 conseille pour les 10 consoles (stabilite, telechargements jeux rapides, 0 interference sur le Wi-Fi Shelly).',
+      ],
+      [
+        'RPi5, Mosquitto, Node-RED, Grafana ?',
+        'NON obligatoires : GOZA (Node.js) integre deja les commandes HTTP Shelly locales, le thermostat auto, la planification horaire et les rapports Excel/PDF. RPi5 reste optionnel.',
+      ],
+      [
+        'Gestion Locale + A Distance',
+        'En Local : 100% autonome sans Internet sur MikroTik (.100 <-> .121-.144). A Distance : controle via portail Cloud GOZA ou tunnel VPN WireGuard integre dans MikroTik.',
+      ],
+    ],
+    theme: 'striped',
+    headStyles: { fillColor: [16, 185, 129], textColor: 255, fontSize: 8 },
+    styles: { fontSize: 7.4, cellPadding: 2 },
+    columnStyles: {
+      0: { cellWidth: 50 },
+      1: { cellWidth: 132 },
     },
   });
 

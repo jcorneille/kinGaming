@@ -197,12 +197,20 @@ export const DomotiqueView: React.FC<DomotiqueViewProps> = ({
               const station = device.stationId ? stations.find(s => s.id === device.stationId) : null;
               const isGaming = station && station.status === 'occupied';
               const isExempt = device.stationId ? isStationShellyExempt(device.stationId, settings) : false;
+              const isTempSensor = device.type === 'TEMPERATURE_SENSOR';
+              const liveTemp = isTempSensor
+                ? (settings.lightingACSchedule?.currentRoomTempC ?? device.temperatureC ?? 26.5)
+                : null;
+              const onThresh = settings.lightingACSchedule?.acTargetOnTempC ?? 27;
+              const offThresh = settings.lightingACSchedule?.acTargetOffTempC ?? 23.5;
 
               return (
                 <div
                   key={device.id}
                   className={`bg-slate-900 border rounded-xl p-4 flex flex-col justify-between transition-all ${
-                    isON
+                    isTempSensor
+                      ? 'border-sky-500/50 shadow-md shadow-sky-500/10'
+                      : isON
                       ? 'border-cyan-500/50 shadow-md shadow-cyan-500/10'
                       : 'border-slate-800 opacity-80 hover:opacity-100'
                   }`}
@@ -214,6 +222,11 @@ export const DomotiqueView: React.FC<DomotiqueViewProps> = ({
                         {isGaming && (
                           <span className="px-1.5 py-0.2 bg-blue-500/20 text-blue-300 border border-blue-500/30 text-[9px] font-bold rounded">
                             Partie en cours
+                          </span>
+                        )}
+                        {isTempSensor && (
+                          <span className="px-1.5 py-0.2 bg-sky-500/20 text-sky-300 border border-sky-500/30 text-[9px] font-bold rounded">
+                            SONDE THERMOSTAT AUTO
                           </span>
                         )}
                         {device.stationId && (
@@ -243,27 +256,83 @@ export const DomotiqueView: React.FC<DomotiqueViewProps> = ({
                     />
                   </div>
 
-                  {/* Consommation Live & Bouton Commutateur */}
-                  <div className="mt-4 pt-3 border-t border-slate-800 flex items-center justify-between">
-                    <div className="font-mono text-xs">
-                      <span className="text-slate-400 font-sans block text-[10px]">Puissance :</span>
-                      <span className={`font-bold text-sm ${isON ? 'text-cyan-400' : 'text-slate-500'}`}>
-                        {isON ? `${device.watts.toFixed(1)} W` : '0 W'}
-                      </span>
+                  {/* Consommation Live ou Télémétrie Sonde Température */}
+                  {isTempSensor && liveTemp !== null ? (
+                    <div className="mt-4 pt-3 border-t border-slate-800 flex items-center justify-between gap-2">
+                      <div>
+                        <span className="text-slate-400 block text-[10px]">Température &amp; Humidité :</span>
+                        <div className="flex items-baseline gap-2">
+                          <span
+                            className={`font-bold font-mono text-base ${
+                              liveTemp >= onThresh
+                                ? 'text-rose-400'
+                                : liveTemp <= offThresh
+                                ? 'text-emerald-400'
+                                : 'text-sky-300'
+                            }`}
+                          >
+                            {liveTemp.toFixed(1)} °C
+                          </span>
+                          <span className="text-[11px] font-mono text-slate-400">
+                            · {device.humidityPercent ?? 58}% HR
+                          </span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            onUpdateSettings({
+                              lightingACSchedule: {
+                                ...settings.lightingACSchedule,
+                                currentRoomTempC: Math.max(18, Number((liveTemp - 1).toFixed(1))),
+                              },
+                            })
+                          }
+                          className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-mono font-bold text-sky-300 cursor-pointer"
+                          title="Tester baisse température -1°C"
+                        >
+                          -1°C
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            onUpdateSettings({
+                              lightingACSchedule: {
+                                ...settings.lightingACSchedule,
+                                currentRoomTempC: Math.min(36, Number((liveTemp + 1).toFixed(1))),
+                              },
+                            })
+                          }
+                          className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-mono font-bold text-rose-300 cursor-pointer"
+                          title="Tester hausse température +1°C"
+                        >
+                          +1°C
+                        </button>
+                      </div>
                     </div>
+                  ) : (
+                    <div className="mt-4 pt-3 border-t border-slate-800 flex items-center justify-between">
+                      <div className="font-mono text-xs">
+                        <span className="text-slate-400 font-sans block text-[10px]">Puissance :</span>
+                        <span className={`font-bold text-sm ${isON ? 'text-cyan-400' : 'text-slate-500'}`}>
+                          {isON ? `${device.watts.toFixed(1)} W` : '0 W'}
+                        </span>
+                      </div>
 
-                    <button
-                      onClick={() => handleDeviceClick(device)}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-bold font-mono transition flex items-center gap-1.5 shadow ${
-                        isON
-                          ? 'bg-cyan-600 hover:bg-cyan-500 text-white'
-                          : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700'
-                      }`}
-                    >
-                      <Zap className="w-3.5 h-3.5" />
-                      <span>{isON ? 'COMMUTER (OFF)' : 'ALLUMER (ON)'}</span>
-                    </button>
-                  </div>
+                      <button
+                        onClick={() => handleDeviceClick(device)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold font-mono transition flex items-center gap-1.5 shadow ${
+                          isON
+                            ? 'bg-cyan-600 hover:bg-cyan-500 text-white'
+                            : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700'
+                        }`}
+                      >
+                        <Zap className="w-3.5 h-3.5" />
+                        <span>{isON ? 'COMMUTER (OFF)' : 'ALLUMER (ON)'}</span>
+                      </button>
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -508,6 +577,186 @@ export const DomotiqueView: React.FC<DomotiqueViewProps> = ({
                 </div>
               )}
             </div>
+
+            {/* Règle 6 : Thermostat Automatique par Capteur de Température (Shelly Plus H&T / DS18B20) */}
+            {(() => {
+              const roomTemp = settings.lightingACSchedule?.currentRoomTempC ?? 26.5;
+              const onTemp = settings.lightingACSchedule?.acTargetOnTempC ?? 27;
+              const offTemp = settings.lightingACSchedule?.acTargetOffTempC ?? 23.5;
+              const thermoEnabled = Boolean(settings.lightingACSchedule?.thermostatEnabled);
+              const respectHours = settings.lightingACSchedule?.thermostatRespectSchedule !== false;
+              const isHot = roomTemp >= onTemp;
+              const isCool = roomTemp <= offTemp;
+
+              return (
+                <div className="p-4 bg-slate-800/60 rounded-xl border border-sky-500/35 space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <span className="text-sm font-bold text-white flex items-center gap-2">
+                        <Thermometer className="w-4 h-4 text-sky-400" />
+                        <Wind className="w-4 h-4 text-cyan-400" />
+                        <span>Thermostat Automatique Climatisation (Sonde Shelly H&amp;T / DS18B20 · .144)</span>
+                      </span>
+                      <span className="text-xs text-slate-400 block mt-0.5">
+                        Allume automatiquement les 2 climatiseurs quand la salle chauffe (&ge; seuil haut) et les coupe quand il fait frais (&le; seuil bas).
+                      </span>
+                    </div>
+                    <label className="flex items-center gap-2 text-xs font-bold text-sky-300 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={thermoEnabled}
+                        onChange={(e) =>
+                          onUpdateSettings({
+                            lightingACSchedule: {
+                              ...settings.lightingACSchedule,
+                              thermostatEnabled: e.target.checked,
+                            },
+                          })
+                        }
+                        className="w-4 h-4 rounded text-sky-600 cursor-pointer"
+                      />
+                      <span>Activer Thermostat Auto</span>
+                    </label>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                    <div>
+                      <label className="text-[11px] text-rose-300 block mb-1">Allumer Clims si Temp &ge; (°C)</label>
+                      <input
+                        type="number"
+                        step="0.5"
+                        min={22}
+                        max={35}
+                        value={onTemp}
+                        onChange={(e) =>
+                          onUpdateSettings({
+                            lightingACSchedule: {
+                              ...settings.lightingACSchedule,
+                              acTargetOnTempC: Number(e.target.value),
+                            },
+                          })
+                        }
+                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[11px] text-emerald-300 block mb-1">Couper Clims si Temp &le; (°C)</label>
+                      <input
+                        type="number"
+                        step="0.5"
+                        min={16}
+                        max={28}
+                        value={offTemp}
+                        onChange={(e) =>
+                          onUpdateSettings({
+                            lightingACSchedule: {
+                              ...settings.lightingACSchedule,
+                              acTargetOffTempC: Number(e.target.value),
+                            },
+                          })
+                        }
+                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white font-mono"
+                      />
+                    </div>
+                    <div className="flex flex-col justify-end">
+                      <label className="flex items-center gap-2 bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-2 text-[11px] text-slate-300 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={respectHours}
+                          onChange={(e) =>
+                            onUpdateSettings({
+                              lightingACSchedule: {
+                                ...settings.lightingACSchedule,
+                                thermostatRespectSchedule: e.target.checked,
+                              },
+                            })
+                          }
+                          className="w-4 h-4 rounded text-cyan-600"
+                        />
+                        <span>Couper hors plage horaire</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* Lecture / Test Sonde en Direct */}
+                  <div className="bg-slate-900/90 border border-slate-700/80 rounded-lg p-3 space-y-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                      <span className="text-slate-300 font-semibold">
+                        Température Sonde (.144) :{' '}
+                        <strong className="font-mono text-base text-sky-300">{roomTemp.toFixed(1)} °C</strong>
+                      </span>
+                      <span
+                        className={`px-2 py-0.5 rounded font-mono text-[10px] font-bold ${
+                          isHot
+                            ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                            : isCool
+                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                            : 'bg-sky-500/20 text-sky-300 border border-sky-500/30'
+                        }`}
+                      >
+                        {isHot
+                          ? 'CHAUD -> Clims ON Auto'
+                          : isCool
+                          ? 'FRAIS -> Clims OFF Auto'
+                          : 'HYSTÉRÉSIS -> Maintien état actuel'}
+                      </span>
+                    </div>
+
+                    <input
+                      type="range"
+                      min={19}
+                      max={34}
+                      step={0.5}
+                      value={roomTemp}
+                      onChange={(e) =>
+                        onUpdateSettings({
+                          lightingACSchedule: {
+                            ...settings.lightingACSchedule,
+                            currentRoomTempC: Number(e.target.value),
+                          },
+                        })
+                      }
+                      className="w-full accent-sky-400 cursor-pointer"
+                    />
+                    <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onUpdateSettings({
+                            lightingACSchedule: { ...settings.lightingACSchedule, currentRoomTempC: 22.0 },
+                          })
+                        }
+                        className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-emerald-300 cursor-pointer"
+                      >
+                        Simuler Frais (22°C)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onUpdateSettings({
+                            lightingACSchedule: { ...settings.lightingACSchedule, currentRoomTempC: 25.5 },
+                          })
+                        }
+                        className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-sky-300 cursor-pointer"
+                      >
+                        Confort (25.5°C)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onUpdateSettings({
+                            lightingACSchedule: { ...settings.lightingACSchedule, currentRoomTempC: 29.0 },
+                          })
+                        }
+                        className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-rose-300 cursor-pointer"
+                      >
+                        Simuler Chaud (29°C)
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         </div>
       )}
@@ -593,6 +842,11 @@ export const DomotiqueView: React.FC<DomotiqueViewProps> = ({
                 onChange={(e) => onUpdateSettings({ mqttUsername: e.target.value })}
                 className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white font-mono focus:outline-none focus:border-cyan-500"
               />
+            </div>
+
+            <div className="p-3 bg-emerald-950/30 border border-emerald-500/30 rounded-lg text-[11px] text-slate-300 leading-relaxed">
+              <strong className="text-emerald-300 block mb-1">Architecture Simplifiée GOZA (Sans Node-RED / Grafana / RPi5 obligatoire) :</strong>
+              GOZA intègre déjà le serveur <strong>Node.js Express</strong>, l&apos;envoi direct <strong>Shelly HTTP Gen1/Gen2</strong>, le thermostat automatique, l&apos;ordonnanceur horaire et les rapports Excel/PDF. Un Raspberry Pi 5 + Mosquitto externe reste <em>100% optionnel</em> (uniquement si vous souhaitez piloter la domotique avec le PC Caissier éteint).
             </div>
           </div>
         </div>

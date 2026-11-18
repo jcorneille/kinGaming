@@ -177,6 +177,11 @@ export const DEFAULT_LIGHTING_SCHEDULE: LightingACSchedule = {
   acOffTime: '23:30',
   lightOnTime: '08:30',
   lightOffTime: '23:45',
+  thermostatEnabled: true,
+  acTargetOnTempC: 27,
+  acTargetOffTempC: 23.5,
+  currentRoomTempC: 26.5,
+  thermostatRespectSchedule: true,
 };
 
 export const DEFAULT_PAGE_BACKGROUND_URL = gozaLoginArenaImg;
@@ -977,6 +982,20 @@ const INITIAL_DOMOTIQUE: DomotiqueDevice[] = [
     hardwareType: 'SONOFF_S26',
     ipAddress: '192.168.1.143',
   },
+  {
+    id: 'dev-temp-sensor',
+    name: 'Capteur Température Salle (Shelly Plus H&T / DS18B20)',
+    type: 'TEMPERATURE_SENSOR',
+    relayTopic: 'gaminghub/climate/temperature',
+    state: 'ON',
+    watts: 1.5,
+    totalKWh: 0.4,
+    isOnline: true,
+    hardwareType: 'SHELLY_HT',
+    ipAddress: '192.168.1.144',
+    temperatureC: 26.5,
+    humidityPercent: 58,
+  },
 ];
 
 const INITIAL_SNACKS: SnackItem[] = [
@@ -1252,7 +1271,27 @@ export function loadAppState(): AppState {
     });
     if (Array.isArray(parsed.domotiqueDevices)) {
       const stationStatusById = new Map(parsed.stations.map((s) => [s.id, s]));
-      parsed.domotiqueDevices = parsed.domotiqueDevices.map((dev) => {
+      const hasTempSensor = parsed.domotiqueDevices.some((d) => d.id === 'dev-temp-sensor' || d.type === 'TEMPERATURE_SENSOR');
+      const devicesWithSensor = hasTempSensor
+        ? parsed.domotiqueDevices
+        : [
+            ...parsed.domotiqueDevices,
+            {
+              id: 'dev-temp-sensor',
+              name: 'Capteur Température Salle (Shelly Plus H&T / DS18B20)',
+              type: 'TEMPERATURE_SENSOR' as const,
+              relayTopic: 'gaminghub/climate/temperature',
+              state: 'ON' as const,
+              watts: 1.5,
+              totalKWh: 0.4,
+              isOnline: true,
+              hardwareType: 'SHELLY_HT' as const,
+              ipAddress: '192.168.1.144',
+              temperatureC: parsed.settings.lightingACSchedule?.currentRoomTempC ?? 26.5,
+              humidityPercent: 58,
+            },
+          ];
+      parsed.domotiqueDevices = devicesWithSensor.map((dev) => {
         if (!dev.stationId) return dev;
         const st = stationStatusById.get(dev.stationId);
         if (st && !exemptIds.has(st.id) && st.status !== 'occupied' && dev.state === 'ON') {
