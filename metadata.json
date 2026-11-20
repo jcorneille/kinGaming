@@ -1,6 +1,5 @@
 {
   "name": "Kin Gaming Hub",
   "description": "Système complet de gestion de salle de jeux vidéo (8 PS4, 2 PS5) à Kinshasa avec domotique IoT, bidevise CDF/USD, billetterie express et PWA hors-ligne.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "requestFramePermissions": []
 }

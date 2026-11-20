@@ -4,37 +4,13 @@ import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
-import { GoogleGenAI } from '@google/genai';
-
-dotenv.config();
-
-const geminiApiKey = process.env.GEMINI_API_KEY || '';
-const aiClient = geminiApiKey
-  ? new GoogleGenAI({
-      apiKey: geminiApiKey,
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build',
-        },
-      },
-    })
-  : null;
-const aiClientAlpha = geminiApiKey
-  ? new GoogleGenAI({
-      apiKey: geminiApiKey,
-      apiVersion: 'v1alpha',
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build',
-        },
-      },
-    })
-  : null;
-
-const ttsMemoryCache = new Map<string, { audioBase64: string; mimeType: string; voiceName: string; createdAt: number }>();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const IS_BUILT_SERVER = path.basename(__dirname) === 'dist';
+const APP_ROOT = IS_BUILT_SERVER ? path.dirname(__dirname) : __dirname;
+dotenv.config({ path: path.join(APP_ROOT, '.env') });
+dotenv.config({ path: path.join(APP_ROOT, '.env.local') });
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
@@ -70,7 +46,7 @@ interface StaffAuthStore {
   auditLogs: ServerPasswordAuditLog[];
 }
 
-const DATA_DIR = path.join(__dirname, '.data');
+const DATA_DIR = path.join(APP_ROOT, '.data');
 const AUTH_STORE_FILE = path.join(DATA_DIR, 'staff-auth.json');
 
 function hashPasswordScrypt(password: string): string {
@@ -118,7 +94,7 @@ function loadAuthStore(): StaffAuthStore {
         username: 'admin',
         fullName: 'Aimé (Propriétaire / Admin)',
         role: 'ADMIN',
-        passwordHash: hashPasswordScrypt('admin2026!'),
+        passwordHash: hashPasswordScrypt('admin'),
         mustChangePassword: true,
         updatedAt: now,
       },
@@ -127,7 +103,7 @@ function loadAuthStore(): StaffAuthStore {
         username: 'gerant',
         fullName: 'Christian (Gérant de Salle)',
         role: 'GERANT',
-        passwordHash: hashPasswordScrypt('gerant2026'),
+        passwordHash: hashPasswordScrypt(''),
         mustChangePassword: true,
         updatedAt: now,
       },
@@ -136,7 +112,7 @@ function loadAuthStore(): StaffAuthStore {
         username: 'erick',
         fullName: 'Erick (Caissier Accueil)',
         role: 'CAISSIER',
-        passwordHash: hashPasswordScrypt('caisse1234'),
+        passwordHash: hashPasswordScrypt(''),
         mustChangePassword: true,
         updatedAt: now,
       },
@@ -145,7 +121,7 @@ function loadAuthStore(): StaffAuthStore {
         username: 'sarah',
         fullName: 'Sarah (Caissière Soir)',
         role: 'CAISSIER',
-        passwordHash: hashPasswordScrypt('caisse4321'),
+        passwordHash: hashPasswordScrypt(''),
         mustChangePassword: true,
         updatedAt: now,
       },
@@ -221,7 +197,7 @@ app.post('/api/auth/sync-user', (req, res) => {
   const nextHash =
     typeof password === 'string' && password.length > 0
       ? hashPasswordScrypt(password)
-      : existing?.passwordHash || hashPasswordScrypt('caisse1234');
+      : existing?.passwordHash || hashPasswordScrypt('');
 
   authStore.credentials[key] = {
     userId: userId || existing?.userId || `staff-${now}`,
@@ -416,6 +392,7 @@ const PUBLIC_TICKETS_FILE = path.join(DATA_DIR, 'public-tickets.json');
 const WHATSAPP_EVENTS_FILE = path.join(DATA_DIR, 'whatsapp-events.json');
 const WIFI_VOUCHERS_FILE = path.join(DATA_DIR, 'wifi-vouchers.json');
 const RESERVATIONS_FILE = path.join(DATA_DIR, 'reservations.json');
+const STK_PAYMENTS_FILE = path.join(DATA_DIR, 'stk-payments.json');
 
 interface StoredWifiVoucher {
   code: string;
@@ -462,6 +439,21 @@ interface StoredPublicTicket {
   reservationFeeUSD?: number;
   isQueuedPrepaid?: boolean;
   updatedAt: number;
+}
+
+interface StoredStkPayment {
+  paymentId: string;
+  network: string;
+  phone: string;
+  amountCDF: number;
+  amountUSD?: number;
+  currency: 'CDF' | 'USD';
+  status: 'PENDING' | 'PAID' | 'FAILED';
+  providerTransactionId: string;
+  expiresAt: number;
+  createdAt: number;
+  paidAt?: number;
+  message?: string;
 }
 
 interface StoredWhatsAppWebhookEvent {
@@ -544,6 +536,7 @@ let publicTicketsStore: Record<string, StoredPublicTicket> = loadPublicTickets()
 let whatsappEventsStore: StoredWhatsAppWebhookEvent[] = loadWhatsAppEvents();
 const wifiVouchersStore: Record<string, StoredWifiVoucher> = loadJsonMap<StoredWifiVoucher>(WIFI_VOUCHERS_FILE);
 const reservationsStore: Record<string, any> = loadJsonMap<any>(RESERVATIONS_FILE);
+const stkPaymentsStore: Record<string, StoredStkPayment> = loadJsonMap<StoredStkPayment>(STK_PAYMENTS_FILE);
 
 // Synchroniser un ou plusieurs tickets vers le registre public QR
 app.post('/api/tickets/sync', (req, res) => {
@@ -639,7 +632,7 @@ app.get('/api/tickets/public/:token', (req, res) => {
 // Variables d'environnement Meta WhatsApp Cloud API
 const WHATSAPP_ACCESS_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN || '';
 const WHATSAPP_PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID || '';
-const WHATSAPP_VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN || 'kin_gaming_hub_secure_token_2026';
+const WHATSAPP_VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN || '';
 const WHATSAPP_API_VERSION = process.env.WHATSAPP_API_VERSION || 'v21.0';
 
 /**
@@ -754,187 +747,16 @@ app.get('/api/whatsapp/webhook-events', (req, res) => {
   res.status(200).json({ events });
 });
 
-function ensurePlayableWavAudio(base64Data: string, mimeType: string): { audioBase64: string; mimeType: string } {
-  const lowerMime = (mimeType || '').toLowerCase();
-  const rawBuffer = Buffer.from(base64Data, 'base64');
-  const hasRiffHeader = rawBuffer.length >= 12 && rawBuffer.subarray(0, 4).toString('ascii') === 'RIFF';
-  const hasCompressedHeader =
-    rawBuffer.length >= 4 &&
-    (rawBuffer.subarray(0, 3).toString('ascii') === 'ID3' ||
-      rawBuffer.subarray(0, 4).toString('ascii') === 'OggS' ||
-      rawBuffer.subarray(0, 4).toString('ascii') === 'fLaC' ||
-      (rawBuffer[0] === 0xff && (rawBuffer[1] & 0xe0) === 0xe0));
-
-  const isRawPcm =
-    !hasRiffHeader &&
-    !hasCompressedHeader &&
-    (lowerMime.includes('l16') || lowerMime.includes('pcm') || lowerMime.includes('raw') || lowerMime.includes('wav') || !lowerMime);
-
-  if (!isRawPcm) {
-    return { audioBase64: base64Data, mimeType: mimeType || 'audio/wav' };
-  }
-
-  const rateMatch = lowerMime.match(/rate=(\d+)/);
-  const channelsMatch = lowerMime.match(/channels=(\d+)/);
-  const sampleRate = rateMatch ? Math.max(8000, Math.min(96000, Number(rateMatch[1]))) : 24000;
-  const numChannels = channelsMatch ? Math.max(1, Math.min(2, Number(channelsMatch[1]))) : 1;
-  const bitsPerSample = 16;
-  const byteRate = sampleRate * numChannels * (bitsPerSample / 8);
-  const blockAlign = numChannels * (bitsPerSample / 8);
-  const dataSize = rawBuffer.length;
-
-  const wavHeader = Buffer.alloc(44);
-  wavHeader.write('RIFF', 0, 'ascii');
-  wavHeader.writeUInt32LE(36 + dataSize, 4);
-  wavHeader.write('WAVE', 8, 'ascii');
-  wavHeader.write('fmt ', 12, 'ascii');
-  wavHeader.writeUInt32LE(16, 16); // PCM chunk size
-  wavHeader.writeUInt16LE(1, 20); // PCM format = 1
-  wavHeader.writeUInt16LE(numChannels, 22);
-  wavHeader.writeUInt32LE(sampleRate, 24);
-  wavHeader.writeUInt32LE(byteRate, 28);
-  wavHeader.writeUInt16LE(blockAlign, 32);
-  wavHeader.writeUInt16LE(bitsPerSample, 34);
-  wavHeader.write('data', 36, 'ascii');
-  wavHeader.writeUInt32LE(dataSize, 40);
-
-  const wavBuffer = Buffer.concat([wavHeader, rawBuffer]);
-  return {
-    audioBase64: wavBuffer.toString('base64'),
-    mimeType: 'audio/wav',
-  };
-}
-
 /**
- * 3. Synthèse Vocale Humaine via Gemini TTS (POST /api/tts/speak)
- * Voix féminine naturelle ('Kore') ou masculine naturelle ('Charon') avec cache mémoire LRU
- * et normalisation RIFF/WAV pour compatibilité totale Windows & macOS (Chrome, Edge, Safari, Firefox)
+ * Synthèse vocale locale via l'API Web Speech du navigateur.
+ * L'application n'envoie aucune requête vocale à un service externe.
  */
-app.post('/api/tts/speak', async (req, res) => {
-  try {
-    const text = String(req.body?.text || '').trim();
-    const gender: 'FEMALE' | 'MALE' = req.body?.gender === 'MALE' ? 'MALE' : 'FEMALE';
-
-    if (!text || text.length > 500) {
-      return res.status(400).json({ success: false, error: 'Texte invalide ou trop long.' });
-    }
-
-    if (!aiClient) {
-      return res.status(503).json({
-        success: false,
-        fallback: true,
-        error: 'GEMINI_API_KEY absente côté serveur — bascule sur la voix locale du navigateur.',
-      });
-    }
-
-    const voiceName = gender === 'MALE' ? 'Charon' : 'Kore';
-    const cacheKey = `${gender}:${text}`;
-    const cached = ttsMemoryCache.get(cacheKey);
-    if (cached) {
-      return res.status(200).json({
-        success: true,
-        audioBase64: cached.audioBase64,
-        mimeType: cached.mimeType,
-        voiceName: cached.voiceName,
-        provider: 'GEMINI_TTS_CACHED',
-      });
-    }
-
-    const attempts: Array<() => Promise<any>> = [
-      // 1. Gemini 3.8 Flash Lite TTS via v1alpha (voix humaine directe)
-      () =>
-        (aiClientAlpha || aiClient).models.generateContent({
-          model: 'gemini-3.8-flash-lite-tts',
-          contents: [
-            {
-              role: 'user',
-              parts: [
-                {
-                  text: `${
-                    gender === 'MALE'
-                      ? 'Lis en français d’une voix masculine naturelle, posée et chaleureuse'
-                      : 'Lis en français d’une voix féminine naturelle, douce et chaleureuse'
-                  } : ${text}`,
-                },
-              ],
-            },
-          ],
-          config: {
-            responseModalities: ['AUDIO'],
-            speechConfig: {
-              voiceConfig: { prebuiltVoiceConfig: { voiceName } },
-            },
-          },
-        }),
-      // 2. Fallback Gemini 3.8 Flash TTS via v1alpha
-      () =>
-        (aiClientAlpha || aiClient).models.generateContent({
-          model: 'gemini-3.8-flash-tts',
-          contents: [{ role: 'user', parts: [{ text }] }],
-          config: {
-            responseModalities: ['AUDIO'],
-            speechConfig: {
-              voiceConfig: { prebuiltVoiceConfig: { voiceName } },
-            },
-          },
-        }),
-    ];
-
-    let rawAudioBase64: string | undefined;
-    let rawAudioMime = 'audio/wav';
-    let lastErr: any = null;
-
-    for (const runAttempt of attempts) {
-      try {
-        const response = await runAttempt();
-        const part = response?.candidates?.[0]?.content?.parts?.[0]?.inlineData;
-        if (part?.data) {
-          rawAudioBase64 = part.data;
-          rawAudioMime = part.mimeType || 'audio/wav';
-          break;
-        }
-      } catch (err: any) {
-        lastErr = err;
-      }
-    }
-
-    if (!rawAudioBase64) {
-      console.warn('[Gemini TTS Fallback]:', lastErr?.message || lastErr);
-      return res.status(503).json({
-        success: false,
-        fallback: true,
-        error: lastErr?.message || 'Aucun flux audio généré par Gemini TTS.',
-      });
-    }
-
-    const normalized = ensurePlayableWavAudio(rawAudioBase64, rawAudioMime);
-
-    if (ttsMemoryCache.size >= 100) {
-      const firstKey = ttsMemoryCache.keys().next().value;
-      if (firstKey) ttsMemoryCache.delete(firstKey);
-    }
-    ttsMemoryCache.set(cacheKey, {
-      audioBase64: normalized.audioBase64,
-      mimeType: normalized.mimeType,
-      voiceName,
-      createdAt: Date.now(),
-    });
-
-    return res.status(200).json({
-      success: true,
-      audioBase64: normalized.audioBase64,
-      mimeType: normalized.mimeType,
-      voiceName,
-      provider: 'GEMINI_TTS',
-    });
-  } catch (error: any) {
-    console.warn('[Gemini TTS Fallback]:', error?.message || error);
-    return res.status(503).json({
-      success: false,
-      fallback: true,
-      error: error?.message || 'Erreur synthèse vocale Gemini TTS',
-    });
-  }
+app.post('/api/tts/speak', (_req, res) => {
+  res.status(503).json({
+    success: false,
+    fallback: true,
+    error: 'Le TTS externe est désactivé. Utilisez la voix locale du navigateur.',
+  });
 });
 
 /**
@@ -1034,7 +856,7 @@ app.post('/api/whatsapp/send', async (req, res) => {
     // Option A : Meta WhatsApp Business Cloud API
     const isPlaceholderToken =
       !accessToken ||
-      accessToken === 'EAAG...' ||
+      accessToken.length < 25 ||
       accessToken === 'EAA...' ||
       accessToken.length < 25 ||
       accessToken.includes('xxxx');
@@ -1145,32 +967,10 @@ app.post('/api/whatsapp/send', async (req, res) => {
   }
 });
 
-/**
- * 4. Architecture de Confirmation Automatique Illico Cash (Rawbank) - Modification 1
- * Endpoint webhook et vérification de transaction prêt pour intégration fournisseur
- */
-app.post('/api/payments/illico/webhook', (req, res) => {
-  const { reference, amount, currency, payerPhone, status, secretKey } = req.body;
-  console.log(`[Illico Cash Webhook] Événement paiement reçu: Ref=${reference}, Montant=${amount} ${currency}, Statut=${status}`);
-
-  // Validation immédiate pour le fournisseur
-  res.status(200).json({
-    success: true,
-    reference,
-    reconciled: true,
-    timestamp: Date.now(),
-    message: 'Transaction Illico Cash acquittée avec succès par le serveur de caisse GOZA',
-  });
-});
-
-app.get('/api/payments/illico/status/:reference', (req, res) => {
-  const { reference } = req.params;
-  // Simule ou vérifie le statut de la référence auprès de l'API bancaire
-  res.status(200).json({
-    reference,
-    status: 'CONFIRMED',
-    provider: 'ILLICO_CASH_RAWBANK',
-    confirmedAt: Date.now(),
+app.all(['/api/payments/illico/webhook', '/api/payments/illico/status/:reference'], (_req, res) => {
+  res.status(410).json({
+    success: false,
+    error: 'Illico Cash n’est plus disponible comme moyen de paiement GOZA.',
   });
 });
 
@@ -1362,36 +1162,152 @@ app.get('/api/wifi/vouchers', (_req, res) => {
 });
 
 /**
- * 4d. Réservations Espace Client (Mobile Money OTP >= 3h + 15% frais ou Réservation Espèces Guichet)
+ * STK Push adapter contract:
+ * POST the payment fields to the configured merchant gateway and poll its status endpoint.
+ * The gateway must return { transactionId, status } and accept a `reference` status query.
  */
-const momoOtpStore: Record<string, { otpCode: string; clientPhone: string; network: string; expiresAt: number }> = {};
+const normalizeStkStatus = (status: unknown): StoredStkPayment['status'] | null => {
+  const value = String(status || '').trim().toUpperCase();
+  if (['PAID', 'SUCCESS', 'SUCCESSFUL', 'COMPLETED'].includes(value)) return 'PAID';
+  if (['FAILED', 'DECLINED', 'CANCELLED', 'CANCELED', 'EXPIRED'].includes(value)) return 'FAILED';
+  if (['PENDING', 'PROCESSING', 'ACCEPTED', 'QUEUED', ''].includes(value)) return 'PENDING';
+  return null;
+};
 
-app.post('/api/reservations/momo-otp', (req, res) => {
-  const { clientPhone, network, amountCDF, amountUSD } = req.body || {};
-  const cleanPhone = String(clientPhone || '').trim();
-  const cleanNetwork = String(network || 'MPESA').trim();
-  if (!cleanPhone || cleanPhone.replace(/\D/g, '').length < 9) {
-    return res.status(400).json({ success: false, error: 'Numéro de téléphone invalide pour l’envoi de l’OTP.' });
+const stkGatewayConfig = () => ({
+  pushUrl: process.env.MOBILE_MONEY_STK_PUSH_URL,
+  statusUrl: process.env.MOBILE_MONEY_STK_STATUS_URL,
+  apiToken: process.env.MOBILE_MONEY_STK_API_TOKEN,
+});
+
+app.post('/api/payments/stk', async (req, res) => {
+  const { phone, network, amountCDF } = req.body || {};
+  const cleanPhone = String(phone || '').trim();
+  const cleanNetwork = String(network || '').trim().toUpperCase();
+  const amount = Number(amountCDF);
+  const supportedNetworks = ['MPESA', 'ORANGE_MONEY', 'AIRTEL_MONEY', 'AFRI_MONEY'];
+  if (cleanPhone.replace(/\D/g, '').length < 9 || cleanPhone.replace(/\D/g, '').length > 15) {
+    return res.status(400).json({ success: false, error: 'Numéro Mobile Money invalide.' });
   }
-  const otpCode = String(Math.floor(100000 + Math.random() * 900000));
+  if (!supportedNetworks.includes(cleanNetwork)) {
+    return res.status(400).json({ success: false, error: 'Réseau Mobile Money non pris en charge.' });
+  }
+  if (!Number.isSafeInteger(amount) || amount <= 0) {
+    return res.status(400).json({ success: false, error: 'Montant de paiement invalide.' });
+  }
+
+  const config = stkGatewayConfig();
+  if (!config.pushUrl || !config.statusUrl || !config.apiToken) {
+    return res.status(503).json({
+      success: false,
+      error: 'Le paiement STK Push n’est pas configuré. Ajoutez les paramètres du prestataire Mobile Money côté serveur.',
+    });
+  }
+
+  const paymentId = crypto.randomUUID();
   const expiresAt = Date.now() + 5 * 60 * 1000;
-  const otpId = `otp-${Date.now().toString(36)}`;
-  momoOtpStore[otpId] = {
-    otpCode,
-    clientPhone: cleanPhone,
-    network: cleanNetwork,
-    expiresAt,
-  };
-  return res.status(200).json({
-    success: true,
-    otpId,
-    otpCode,
-    network: cleanNetwork,
-    clientPhone: cleanPhone,
-    amountCDF: Number(amountCDF || 0),
-    amountUSD: Number(amountUSD || 0),
-    expiresAt,
-  });
+  try {
+    const providerResponse = await fetch(config.pushUrl, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${config.apiToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        reference: paymentId,
+        network: cleanNetwork,
+        phone: cleanPhone,
+        amount,
+        currency: 'CDF',
+      }),
+      signal: AbortSignal.timeout(15000),
+    });
+    const providerData = await providerResponse.json().catch(() => ({}));
+    if (!providerResponse.ok) {
+      return res.status(502).json({
+        success: false,
+        error: providerData?.message || providerData?.error || 'Le prestataire a refusé la demande de paiement.',
+      });
+    }
+
+    const providerTransactionId = String(providerData?.transactionId || '').trim();
+    const status = normalizeStkStatus(providerData?.status);
+    if (!providerTransactionId || status === null) {
+      return res.status(502).json({ success: false, error: 'Réponse de paiement invalide du prestataire.' });
+    }
+
+    const payment: StoredStkPayment = {
+      paymentId,
+      network: cleanNetwork,
+      phone: cleanPhone,
+      amountCDF: amount,
+      status,
+      providerTransactionId,
+      expiresAt,
+      createdAt: Date.now(),
+      ...(status === 'PAID' ? { paidAt: Date.now() } : {}),
+      ...(providerData?.message ? { message: String(providerData.message) } : {}),
+    };
+    stkPaymentsStore[paymentId] = payment;
+    saveJsonMap(STK_PAYMENTS_FILE, stkPaymentsStore);
+    return res.status(201).json({
+      success: true,
+      paymentId,
+      status: payment.status,
+      expiresAt,
+    });
+  } catch (error) {
+    console.error('[STK] Erreur demande paiement:', error);
+    return res.status(502).json({ success: false, error: 'Impossible de joindre le prestataire de paiement.' });
+  }
+});
+
+app.get('/api/payments/stk/:paymentId', async (req, res) => {
+  const payment = stkPaymentsStore[String(req.params.paymentId || '')];
+  if (!payment) {
+    return res.status(404).json({ success: false, error: 'Demande de paiement introuvable.' });
+  }
+  if (payment.status !== 'PENDING') {
+    return res.status(200).json({ success: true, status: payment.status, message: payment.message });
+  }
+  if (Date.now() >= payment.expiresAt) {
+    payment.status = 'FAILED';
+    payment.message = 'La demande de paiement a expiré.';
+    saveJsonMap(STK_PAYMENTS_FILE, stkPaymentsStore);
+    return res.status(200).json({ success: true, status: payment.status, message: payment.message });
+  }
+
+  const config = stkGatewayConfig();
+  if (!config.statusUrl || !config.apiToken) {
+    return res.status(503).json({ success: false, error: 'Vérification du prestataire Mobile Money non configurée.' });
+  }
+  try {
+    const statusUrl = new URL(config.statusUrl);
+    statusUrl.searchParams.set('reference', payment.providerTransactionId);
+    const providerResponse = await fetch(statusUrl, {
+      headers: { Authorization: `Bearer ${config.apiToken}` },
+      signal: AbortSignal.timeout(15000),
+    });
+    const providerData = await providerResponse.json().catch(() => ({}));
+    if (!providerResponse.ok) {
+      return res.status(502).json({
+        success: false,
+        error: providerData?.message || providerData?.error || 'Le statut ne peut pas être vérifié auprès du prestataire.',
+      });
+    }
+    const status = normalizeStkStatus(providerData?.status);
+    if (status === null) {
+      return res.status(502).json({ success: false, error: 'Statut de paiement invalide du prestataire.' });
+    }
+    payment.status = status;
+    payment.message = providerData?.message ? String(providerData.message) : undefined;
+    if (status === 'PAID') payment.paidAt = Date.now();
+    saveJsonMap(STK_PAYMENTS_FILE, stkPaymentsStore);
+    return res.status(200).json({ success: true, status: payment.status, message: payment.message });
+  } catch (error) {
+    console.error('[STK] Erreur vérification paiement:', error);
+    return res.status(502).json({ success: false, error: 'Impossible de vérifier le paiement auprès du prestataire.' });
+  }
 });
 
 app.get('/api/reservations', (_req, res) => {
@@ -1415,6 +1331,28 @@ app.post('/api/reservations', (req, res) => {
       success: false,
       error: 'La réservation Mobile Money depuis l’espace client exige 3h (180 min) minimum.',
     });
+  }
+  const reservationCode = String(reservation.reservationCode).toUpperCase();
+  if (!reservationsStore[reservationCode] && reservation.status === 'PAID_WAITING_CHECKIN') {
+    const payment = stkPaymentsStore[String(reservation.paymentReference || '')];
+    if (
+      !payment ||
+      payment.status !== 'PAID' ||
+      payment.network !== String(reservation.paymentMethod || '').toUpperCase() ||
+      payment.amountCDF !== Number(reservation.totalAmountCDF) ||
+      payment.phone !== String(reservation.payerPhone || '').trim()
+    ) {
+      return res.status(402).json({
+        success: false,
+        error: 'Réservation refusée : aucun paiement STK Push confirmé correspondant.',
+      });
+    }
+    const paymentAlreadyUsed = Object.values(reservationsStore).some(
+      (existing: any) => existing?.paymentReference === payment.paymentId
+    );
+    if (paymentAlreadyUsed) {
+      return res.status(409).json({ success: false, error: 'Ce paiement est déjà associé à une réservation.' });
+    }
   }
   if (
     reservation.status === 'CANCELLED' &&
@@ -1513,13 +1451,22 @@ app.post('/api/settings/validate', (req, res) => {
 });
 
 app.get('/api/system/health', (_req, res) => {
+  const whatsappConfigured = Boolean(
+    process.env.WHATSAPP_ACCESS_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID
+  );
+  const stkConfigured = Boolean(
+    process.env.MOBILE_MONEY_STK_PUSH_URL &&
+    process.env.MOBILE_MONEY_STK_STATUS_URL &&
+    process.env.MOBILE_MONEY_STK_API_TOKEN
+  );
   res.status(200).json({
     status: 'HEALTHY',
     version: '2.18.0',
     uptimeSeconds: Math.floor(process.uptime()),
     serverTime: new Date().toISOString(),
-    mqttBroker: 'CONNECTED (192.168.1.100:1883)',
-    whatsappGateway: 'OPERATIONAL (Meta Cloud API v21.0)',
+    mqttBroker: process.env.MQTT_BROKER_URL ? 'CONFIGURED (connectivity not verified)' : 'NOT_CONFIGURED',
+    whatsappGateway: whatsappConfigured ? 'CONFIGURED (connectivity not verified)' : 'NOT_CONFIGURED',
+    mobileMoneyStk: stkConfigured ? 'CONFIGURED (connectivity not verified)' : 'NOT_CONFIGURED',
     memoryUsageMB: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
   });
 });
@@ -1528,7 +1475,7 @@ app.get('/api/system/health', (_req, res) => {
  * 6. Configuration Vite middleware (dev) / Static (prod)
  */
 async function startServer() {
-  if (process.env.NODE_ENV !== 'production') {
+  if (!IS_BUILT_SERVER && process.env.NODE_ENV !== 'production') {
     const { createServer } = await import('vite');
     const vite = await createServer({
       server: { middlewareMode: true },
@@ -1536,9 +1483,9 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    app.use(express.static(path.join(__dirname, 'dist')));
+    app.use(express.static(path.join(APP_ROOT, 'dist')));
     app.get('*', (_req, res) => {
-      res.sendFile(path.join(__dirname, 'dist', 'index.html'));
+      res.sendFile(path.join(APP_ROOT, 'dist', 'index.html'));
     });
   }
 
